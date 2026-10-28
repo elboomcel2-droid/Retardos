@@ -1,0 +1,77 @@
+/* Fuente de estilos de la interfaz. Se compila a public/app.css con `npm run build:css`. */
+@import "tailwindcss";
+@source "../public";
+
+@theme {
+  --font-sans: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  --font-mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
+  --color-brand-50: #eef3f9;
+  --color-brand-100: #d6e2f0;
+  --color-brand-500: #2f5486;
+  --color-brand-700: #1f3a5f;
+  --color-brand-800: #182e4b;
+  --color-brand-900: #0f1f33;
+  --color-accent: #e8a317;
+}
+
+@layer components {
+  .card { @apply rounded-2xl border border-slate-200/80 bg-white shadow-sm; }
+  .card-pad { @apply p-5; }
+  .card-title { @apply text-sm font-semibold text-slate-900; }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium whitespace-nowrap
+      transition focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500/50 disabled:cursor-wait disabled:opacity-60;
+  }
+  .btn-primary { @apply bg-brand-700 text-white shadow-sm hover:bg-brand-800; }
+  .btn-secondary { @apply border border-slate-300 bg-white text-slate-700 shadow-sm hover:bg-slate-50; }
+  .btn-ghost { @apply text-slate-600 hover:bg-slate-100; }
+  .btn-danger { @apply border border-rose-200 bg-white text-rose-700 hover:bg-rose-50; }
+  .btn-sm { @apply rounded-md px-2.5 py-1 text-xs; }
+
+  .field { @apply flex flex-col gap-1 text-xs font-medium text-slate-500; }
+  .input {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-xs
+      placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none;
+  }
+  .checkbox { @apply size-4 rounded border-slate-300 accent-brand-700; }
+
+  .badge { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ring-1 ring-inset; }
+
+  .tbl { @apply w-full text-left text-sm; }
+  .tbl thead th {
+    @apply sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 px-2.5 py-2.5 align-bottom text-[11px] leading-tight font-semibold
+      tracking-wide text-slate-500 uppercase backdrop-blur;
+  }
+  /* Encabezados de números en varias líneas para que la tabla quepa sin desplazarse. */
+  .tbl thead th.num { @apply max-w-24; }
+  .tbl tbody td { @apply border-b border-slate-100 px-2.5 py-2.5 align-top; }
+  .tbl tbody tr:last-child td { @apply border-b-0; }
+  .tbl .num { @apply text-right tabular-nums; }
+  .row-link { @apply cursor-pointer transition hover:bg-brand-50/60; }
+
+  .nav-item {
+    @apply flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-slate-300 transition
+      hover:bg-white/10 hover:text-white;
+  }
+  .nav-item.active { @apply bg-white/15 text-white shadow-inner; }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium
+      text-slate-600 transition hover:border-slate-300;
+  }
+  .chip.on { @apply border-brand-700 bg-brand-700 text-white; }
+
+  .spinner { @apply inline-block size-4 animate-spin rounded-full border-2 border-current border-r-transparent; }
+}
+
+dialog::backdrop { background: rgb(15 23 42 / 0.45); backdrop-filter: blur(2px); }
+dialog.drawer { margin: 0 0 0 auto; height: 100vh; max-height: 100vh; }
+
+@media print {
+  @page { margin: 12mm; }
+  body { background: #fff !important; }
+  .card { box-shadow: none !important; break-inside: avoid; }
+  .overflow-auto { overflow: visible !important; max-height: none !important; }
+  .tbl thead th { position: static; }
+}
