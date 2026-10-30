@@ -21,16 +21,34 @@ La primera vez que se abre, el sistema pide crear el **primer usuario**, que ser
 Después, en **Usuarios**, el administrador da acceso a cada persona con un usuario
 (ej. `luz.samano`) y una contraseña temporal que la persona debe cambiar al entrar.
 
-| Tipo de acceso | Qué puede hacer |
-|---|---|
-| Administrador | Todo, incluidos usuarios y la conexión con los checadores |
-| Recursos Humanos | Justificaciones, nombres completos, bajas, festivos, horarios, reglas, cargar checadas e Historial |
-| Solo consulta | Ver, descargar e imprimir reportes y actualizar checadas |
+| Permiso | Administrador (Sistemas) | Recursos Humanos | Gerente | Dueño / Dirección |
+|---|:-:|:-:|:-:|:-:|
+| Ver panel, empleados y detalle; descargar Excel/PDF e imprimir | ✓ | ✓ | ✓ | ✓ |
+| Actualizar las checadas desde los checadores | ✓ | ✓ | ✓ | ✓ |
+| Justificar o anotar retardos y faltas | ✓ | ✓ | ✓ | — |
+| Nombres completos, bajas, horarios especiales y vincular sucursales | ✓ | ✓ | — | — |
+| Reglas de puntualidad, horarios, festivos y ajustes del cálculo | ✓ | ✓ | — | — |
+| Cargar checadas desde archivo | ✓ | ✓ | — | — |
+| A quién se envía el reporte por correo y enviarlo | ✓ | ✓ | — | — |
+| Cerrar la quincena | ✓ | ✓ | — | — |
+| Reabrir una quincena cerrada | ✓ | — | — | ✓ |
+| Ver el historial | ✓ | ✓ | — | ✓ |
+| Usuarios | ✓ | — | — | — |
+| Conexión con los checadores y servidor de correo | ✓ | — | — | — |
+
+La tabla vive en `src/auth.js` (`ROLES`) y se muestra igual en la pantalla **Usuarios**.
+Quien tenía el acceso anterior "Solo consulta" quedó como **Gerente**.
+RH cierra la quincena pero no puede reabrirla: así, lo que se pagó solo cambia si Sistemas o
+Dirección lo autorizan (con motivo, que queda en el Historial).
 
 En el **Historial** queda quién hizo qué y cuándo, y se puede filtrar por persona: entradas al
 sistema (y los intentos fallidos), descargas de Excel y PDF, impresiones (botón Imprimir o
 Ctrl+P), justificaciones y cambios. Los reportes salen con el nombre de quien los generó.
-La sesión se cierra sola tras 8 horas sin uso; 5 intentos fallidos bloquean el usuario 5 minutos.
+La sesión se cierra sola tras 8 horas sin uso; 5 intentos fallidos bloquean el usuario 5 minutos
+(el sistema avisa cuando quedan 2 intentos). El mensaje nunca dice si falló el usuario o la contraseña.
+Las contraseñas nuevas deben tener al menos 8 caracteres, letras y números, y no pueden ser obvias
+(12345678, elboom123…) ni contener el usuario o el nombre de la persona. Las contraseñas que ya
+existen siguen funcionando; la regla se aplica al crear o cambiar una.
 Si alguien olvida su contraseña, el administrador le pone una temporal nueva.
 Si el que la olvidó es el administrador, en el equipo donde está instalado el sistema abra
 `restablecer-clave.bat`, escriba su usuario y entre con la contraseña temporal que aparece.
@@ -93,6 +111,66 @@ aplicada.
 - **PDF**: las mismas cifras y gráficas en hojas tamaño carta horizontal, listo para imprimir o
   enviar. Se genera con Edge/Chrome del propio equipo (sin internet).
 
+- **Reporte por persona** (Empleados → pestaña *Reporte por persona*): la ficha de cada empleado con
+  todos sus días (horario, entrada, comida, salida, horas, resultado, checadas y explicación), una
+  hoja por persona con espacio para firmas. Se elige a quién incluir y se descarga en PDF, se
+  imprime o se envía por correo.
+
+## Cierre de quincena
+
+Cuando la quincena ya se pagó, RH la cierra en **Cierre de quincena**. Se guarda una copia exacta de
+cada día de todas las sucursales: desde ese momento no se puede justificar ni borrar notas de esos
+días, y los reportes de esas fechas salen de la copia aunque después cambien horarios, reglas o
+checadas. Si hubo un error, Sistemas o Dirección la reabren escribiendo el motivo.
+
+## Envío por correo
+
+Sistemas configura el servidor de salida (Configuración → Opciones avanzadas → Servidor de correo);
+con Gmail o Microsoft 365 se usa una *contraseña de aplicación*. RH escribe a quién se envía
+(Configuración → Envío por correo). Al cerrar una quincena se envían automáticamente el PDF general
+y el PDF por persona; también se puede enviar desde *Reporte por persona*.
+
+## La misma persona en varias sucursales
+
+Cada checador da su propio número, así que quien va a otra sucursal (entregas, o lo mandan unos
+días a Acapulco) aparecía como dos personas y con faltas en su sucursal. En la ficha del empleado,
+**Vincular otro número** une sus registros: todas sus checadas cuentan como de una sola persona,
+el día que checó en otra sucursal no es falta y el reporte dice dónde checó. **Ahora trabaja aquí**
+cambia su sucursal cuando se muda. En **Empleados** aparece un aviso con los nombres que están en
+dos checadores sin vincular. Si trabajó fuera sin checar en ningún lado, se justifica como
+"Trabajó en otra sucursal" o "Entregas o trabajo fuera de la sucursal" (se puede aplicar a varios días).
+
+## Usuario de MySQL de solo lectura (recomendado)
+
+El usuario actual tiene **todos los permisos** sobre las bases de los checadores y también sobre
+`refacc29_nomboom`, `refacc29_comercio`, `refacc29_inv_boom` y `refacc29_productos`. El sistema
+nunca escribe (cada conexión se abre en modo solo lectura), pero esa contraseña está guardada en
+`data/retardos.db`: si el equipo o el archivo se pierden, alguien podría borrar o alterar nómina e
+inventario. Con un usuario que solo pueda **leer las 4 bases de checadores** el riesgo desaparece.
+
+En cPanel (el prefijo `refacc29_` indica que el servidor lo usa):
+1. **Bases de datos MySQL → Agregar nuevo usuario**: p. ej. `refacc29_checalect` con contraseña larga.
+2. **Agregar usuario a la base de datos**: para cada una de `refacc29_check_alp`, `refacc29_check_tizoc_2`,
+   `refacc29_check_acapulco` y `refacc29_check_chilpancingo`, marque **solo SELECT**.
+3. **MySQL remoto**: permita únicamente la IP pública de la oficina donde corre el sistema.
+4. En el sistema: Configuración → Opciones avanzadas → cambie usuario y contraseña, y pulse
+   **Guardar y probar** en cada sucursal. La prueba revisa los permisos (`SHOW GRANTS`) y avisa si
+   el usuario todavía tiene más de lo necesario.
+
+Equivalente en SQL (lo ejecuta quien administra el servidor, no este sistema):
+
+```sql
+CREATE USER 'refacc29_checalect'@'IP_DE_LA_OFICINA' IDENTIFIED BY 'contraseña-larga';
+GRANT SELECT ON refacc29_check_alp.* TO 'refacc29_checalect'@'IP_DE_LA_OFICINA';
+GRANT SELECT ON refacc29_check_tizoc_2.* TO 'refacc29_checalect'@'IP_DE_LA_OFICINA';
+GRANT SELECT ON refacc29_check_acapulco.* TO 'refacc29_checalect'@'IP_DE_LA_OFICINA';
+GRANT SELECT ON refacc29_check_chilpancingo.* TO 'refacc29_checalect'@'IP_DE_LA_OFICINA';
+```
+
+(Solo se leen las tablas `personnel_employee` e `iclock_transaction`; si quiere ir más fino, el
+`GRANT SELECT` puede ser sobre esas dos tablas.) Después, cambie la contraseña del usuario con
+todos los permisos, porque ha estado guardada en este equipo.
+
 ## Actualización automática (en vivo)
 
 Mientras alguien tenga el sistema abierto, trae solo las checadas del día, únicamente en horario
@@ -115,7 +193,7 @@ con fecha y el nombre capturado en “Usuario”.
 
 ## Datos
 
-Todo se guarda en `data/retardos.db` (SQLite). Contiene la contraseña de MySQL en texto plano:
+Todo se guarda en `data/retardos.db` (SQLite). Contiene las contraseñas de MySQL y del correo en texto plano:
 no lo comparta. Cada día se guarda automáticamente una copia en `data/respaldos/` (se conservan
 las 14 más recientes); para restaurar, cierre el sistema y copie el respaldo como `data/retardos.db`.
 

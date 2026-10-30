@@ -67,8 +67,30 @@ async function testConnection(settings, branch) {
       marcajes: Number(tx.n),
       desde: tx.desde && normTime(tx.desde),
       hasta: tx.hasta && normTime(tx.hasta),
+      permisos: await grants(conn),
     };
   });
+}
+
+// Revisa qué permisos tiene el usuario de MySQL (SHOW GRANTS solo consulta).
+// Lo ideal: únicamente SELECT sobre las bases de los checadores.
+async function grants(conn) {
+  try {
+    const [rows] = await conn.query('SHOW GRANTS FOR CURRENT_USER()');
+    const lines = rows.map((r) => String(Object.values(r)[0]).replace(/IDENTIFIED BY PASSWORD\s+'[^']*'/i, '').trim());
+    const extra = lines.filter((l) => {
+      const m = l.match(/^GRANT\s+(.+?)\s+ON\s+(\S+)\s+TO/i);
+      if (!m) return false;
+      const privs = m[1].split(',').map((p) => p.trim().toUpperCase());
+      if (privs.every((p) => p === 'USAGE')) return false;
+      const db = m[2].replace(/[`'"]/g, '').split('.')[0];
+      const soloLectura = privs.every((p) => ['SELECT', 'SHOW VIEW', 'USAGE'].includes(p));
+      return !soloLectura || db === '*' || !/_check_/i.test(db);
+    });
+    return { solo_lectura: extra.length === 0, sobrantes: extra };
+  } catch {
+    return null;
+  }
 }
 
 async function fetchBranch(settings, branch, from, to) {

@@ -305,3 +305,57 @@ test('QA: detecta nombres incompletos (iniciales o sin apellido)', () => {
   assert.equal(isShortName({ first_name: 'PERLA', last_name: 'ANGEL FLORES' }), false);
   assert.equal(isShortName({ first_name: 'Ana Luz', last_name: '' }), false);
 });
+
+// ---------------------------------------------------------------- misma persona en dos sucursales
+const aca = { id: 3, code: '03', name: 'ACAPULCO', schedule: DEFAULT_WEEK, tolerancia_min: null };
+const linked = (principal = '1|7') => [
+  { branch_id: 1, emp_code: '7', first_name: 'Ana', last_name: 'López', activo: true },
+  { branch_id: 3, emp_code: '45', first_name: 'Ana', last_name: 'L', activo: true, principal },
+];
+const punchAt = (b, code, t) => ({ branch_id: b, emp_code: code, punch_time: t });
+
+test('vinculada: los días que checó en otra sucursal no son falta y se dice dónde', () => {
+  const r = compute({
+    from: '2026-09-07', to: '2026-09-08', today: '2026-10-28', branches: [branch], allBranches: [branch, aca], settings,
+    employees: linked(), holidays: [], justifications: [],
+    punches: [
+      ...otro.map(([c, t]) => punchAt(1, c, t)),
+      punchAt(1, '7', '2026-09-07 08:30:00'),
+      punchAt(3, '45', '2026-09-08 08:31:00'), punchAt(3, '45', '2026-09-08 18:00:00'),
+    ],
+  });
+  const d = day(r, '2026-09-08');
+  assert.equal(d.estado, 'PUNTUAL');
+  assert.deepEqual(d.checadas_lugar, ['03 ACAPULCO', '03 ACAPULCO']);
+  assert.ok(d.notas.includes('Checó en 03 ACAPULCO'));
+  // Su número de Acapulco no aparece como otra persona.
+  assert.equal(r.employees.length, 2);
+  assert.ok(!r.days.some((x) => x.emp_code === '45'));
+  assert.equal(r.vinculos[0].otros[0].emp_code, '45');
+});
+
+test('vinculada: sin vínculo cuenta como dos personas (comportamiento anterior)', () => {
+  const r = compute({
+    from: '2026-09-08', to: '2026-09-08', today: '2026-10-28', branches: [branch, aca], settings,
+    employees: linked(null), holidays: [], justifications: [],
+    punches: [punchAt(1, '99', '2026-09-08 08:50:00'), punchAt(1, '7', '2026-09-07 08:30:00'), punchAt(3, '45', '2026-09-08 08:31:00')],
+  });
+  assert.equal(day(r, '2026-09-08').estado, 'FALTA');
+  assert.equal(day(r, '2026-09-08', '45').estado, 'PUNTUAL');
+});
+
+test('vinculada: la justificación capturada con el otro número sigue valiendo', () => {
+  const r = compute({
+    from: '2026-09-08', to: '2026-09-08', today: '2026-10-28', branches: [branch], settings,
+    employees: linked(), holidays: [],
+    justifications: [{ id: 1, branch_id: 3, emp_code: '45', fecha: '2026-09-08', tipo: 'Comisión de trabajo', nota: 'x', autor: 'RH', creado: '' }],
+    punches: [punchAt(1, '99', '2026-09-08 08:50:00'), punchAt(1, '7', '2026-09-07 08:30:00')],
+  });
+  assert.equal(day(r, '2026-09-08').estado, 'JUSTIFICADO');
+});
+
+test('resúmenes recalculados a partir de días (quincena cerrada) dan lo mismo', () => {
+  const { summaries } = require('../src/engine');
+  const r = run([...otro, '2026-09-07 08:50:00', '2026-09-08 08:30:00']);
+  assert.deepEqual(summaries(r.days, settings), { employees: r.employees, branches: r.branches });
+});

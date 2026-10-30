@@ -224,4 +224,133 @@ function buildReportHtml({ from, to, today, sucursal, result, settings, generado
 </style></head><body>${pages.map((p) => `<div class="page">${p}</div>`).join('')}</body></html>`;
 }
 
-module.exports = { buildReportHtml };
+// ---------------------------------------------------------------- Reporte por persona
+// Lo mismo que se ve en la ficha de cada empleado, día por día, para que RH lo
+// imprima o lo envíe. Una persona por hoja (o más hojas si el periodo es largo).
+const BADGE = {
+  PUNTUAL: ['#dff3e4', '#166534'],
+  RETARDO: ['#fff1c2', '#854d0e'],
+  FALTA: ['#fad4d4', '#9f1239'],
+  INCOMPLETO: ['#ffe0c2', '#9a3412'],
+  JUSTIFICADO: ['#e0f2fe', '#075985'],
+  'DÍA EXTRA': ['#ede4fb', '#5b21b6'],
+  'SIN DATOS': ['#e5e5e5', '#475569'],
+  DESCANSO: ['#f1f5f9', '#64748b'],
+  FESTIVO: ['#f1f5f9', '#64748b'],
+  PENDIENTE: ['#f1f5f9', '#94a3b8'],
+};
+const hm = (t) => (t ? t.slice(0, 5) : '—');
+const horas = (min) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`;
+
+function personDayRow(d) {
+  const [bg, fg] = BADGE[d.estado] || BADGE.DESCANSO;
+  const checadas = d.checadas.length
+    ? d.checadas.map((t, i) => {
+        const lugar = d.checadas_lugar?.[i];
+        const dup = d.duplicadas.includes(t);
+        return `<span class="ck${dup ? ' dup' : ''}">${t.slice(0, 5)}${lugar ? ` <small>${esc(lugar.slice(3))}</small>` : ''}</span>`;
+      }).join(' ')
+    : '<span class="muted">sin checadas</span>';
+  const j = d.justificacion;
+  const just = j
+    ? `<div class="just ${j.justificado ? 'si' : 'no'}">${j.justificado ? `✔ Justificado · <b>${esc(j.tipo)}</b>${j.hora_permiso ? ` (permiso hasta las ${esc(j.hora_permiso)})` : ''}` : '✖ <b>No justificado</b>'}: ${esc(j.nota)} <span class="muted">— ${esc(j.autor)}, ${esc(j.creado)}</span></div>`
+    : '';
+  const comida = d.comida_salida ? `${hm(d.comida_salida)}–${hm(d.comida_regreso)}${d.comida_min != null ? `<div class="${d.exceso_comida_min ? 'bad' : 'muted'}">${d.comida_min} min</div>` : ''}` : '—';
+  return `<tr>
+    <td class="nw"><b>${fmtDate(d.fecha)}</b><div class="muted">${esc(d.dia)}</div></td>
+    <td class="nw">${esc(d.horario)}</td>
+    <td class="n">${hm(d.entrada)}</td>
+    <td class="n nw">${comida}</td>
+    <td class="n">${hm(d.salida)}</td>
+    <td class="n">${d.horas || '—'}</td>
+    <td><span class="badge" style="background:${bg};color:${fg}">${esc(d.estado)}</span>${d.retardo_min ? ` <b class="late">+${d.retardo_min} min</b>` : ''}
+      ${d.estado_original ? `<div class="muted">antes era: ${esc(d.estado_original)}</div>` : ''}
+      ${d.incidencias.map((i) => `<div class="inc">${esc(i)}</div>`).join('')}</td>
+    <td><div class="cks">${checadas}</div><div class="muted">${esc(d.regla)}${d.notas.length ? ` · ${esc(d.notas.join(' · '))}` : ''}</div>${just}</td>
+  </tr>`;
+}
+
+function buildPersonasHtml({ from, to, result, generadoPor, cierres = [], autoPrint = false }) {
+  const byEmp = new Map();
+  for (const d of result.days) {
+    const k = `${d.branch_id}|${d.emp_code}`;
+    if (!byEmp.has(k)) byEmp.set(k, []);
+    byEmp.get(k).push(d);
+  }
+  const cerrado = cierres.length
+    ? `<div class="closed">${cierres.map((c) => `Quincena ${fmtDate(c.desde)} al ${fmtDate(c.hasta)} cerrada el ${esc(c.cerrado_en.slice(0, 16).split(' ').map((x, i) => (i ? x : fmtDate(x))).join(' '))} por ${esc(c.cerrado_por)}`).join(' · ')}: estos días ya no cambian.</div>`
+    : '';
+  const people = result.employees.map((s) => {
+    const days = byEmp.get(`${s.branch_id}|${s.emp_code}`) || [];
+    const trabajados = days.reduce((n, d) => n + (d.minutos || 0), 0);
+    const tiles = [
+      ['Puntualidad', pct(s.puntualidad)],
+      ['Retardos', s.retardos, `${s.minutos_retardo} min`],
+      ['Faltas', s.faltas],
+      ['Faltas por retardos', s.faltas_por_retardos ?? 0],
+      ['Checadas incompletas', s.incompletos + s.sin_salida],
+      ['Se pasó en la comida', s.excesos_comida, s.minutos_exceso_comida ? `${s.minutos_exceso_comida} min de más` : ''],
+      ['No checó comida', s.comida_sin_checar],
+      ['Justificados', s.justificados],
+      ['Días extra', s.dias_extra, s.minutos_extra ? `${horas(s.minutos_extra)} h` : ''],
+      ['Horas trabajadas', horas(trabajados), 'sin contar comida'],
+    ];
+    return `<section class="person">
+      <header><div><h1>${esc(s.nombre)}</h1>
+        <p>${esc(s.sucursal)} · No. ${esc(s.emp_code)} · Periodo <b>${fmtDate(from)} al ${fmtDate(to)}</b></p></div>
+        <p class="gen">El Boom Tractopartes · Reporte de asistencia por persona<br>Generado el ${new Date().toLocaleString('es-MX')}${generadoPor ? ` por ${esc(generadoPor)}` : ''}</p></header>
+      ${cerrado}
+      <div class="tiles">${tiles.map(([l, v, sub]) => `<div class="tile"><div class="tl">${esc(l)}</div><div class="tv">${esc(v)}</div>${sub ? `<div class="ts">${esc(sub)}</div>` : ''}</div>`).join('')}</div>
+      <table><thead><tr><th>Fecha</th><th>Horario</th><th class="n">Entrada</th><th class="n">Comida</th><th class="n">Salida</th><th class="n">Horas</th><th>Resultado</th><th>Checadas del día y explicación</th></tr></thead>
+        <tbody>${days.map(personDayRow).join('')}</tbody></table>
+      <div class="firmas"><div>Firma del empleado</div><div>Revisó (Recursos Humanos)</div></div>
+    </section>`;
+  });
+
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Asistencia por persona ${fmtDate(from)} al ${fmtDate(to)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  @page { size: letter landscape; margin: 9mm; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", system-ui, sans-serif; color: ${C.ink}; background: #fff; font-size: 10px; }
+  .person { break-after: page; padding: 2px; }
+  .person:last-child { break-after: auto; }
+  @media screen { body { background: #f1f5f9; padding: 12px; } .person { background: #fff; max-width: 1100px; margin: 0 auto 16px; padding: 16px; border-radius: 12px; box-shadow: 0 1px 3px #0002; } }
+  header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px; border-bottom: 3px solid #1f3a5f; padding-bottom: 6px; margin-bottom: 8px; }
+  h1 { margin: 0; font-size: 18px; color: #1f3a5f; }
+  header p { margin: 3px 0 0; color: ${C.ink2}; font-size: 11px; }
+  .gen { text-align: right; font-size: 9px !important; }
+  .closed { margin-bottom: 8px; padding: 5px 8px; border-radius: 6px; background: #e0f2fe; color: #075985; font-size: 10px; }
+  .tiles { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; margin-bottom: 8px; }
+  @media screen and (max-width: 800px) { .tiles { grid-template-columns: repeat(2, 1fr); } table { display: block; overflow-x: auto; } }
+  .tile { border: 1px solid #e2e8f0; border-radius: 7px; padding: 4px 6px; background: #f8fafc; }
+  .tl { font-size: 8.5px; font-weight: 600; color: ${C.ink2}; }
+  .tv { font-size: 15px; font-weight: 700; }
+  .ts { font-size: 8px; color: ${C.ink2}; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  th { background: #1f3a5f; color: #fff; text-align: left; padding: 4px 5px; font-weight: 600; font-size: 9px; }
+  td { padding: 4px 5px; border-bottom: 1px solid #e5e7eb; vertical-align: top; }
+  tr { break-inside: avoid; }
+  .n { text-align: right; font-variant-numeric: tabular-nums; }
+  .nw { white-space: nowrap; }
+  .muted { color: ${C.muted}; font-size: 9px; }
+  .bad { color: #be123c; font-weight: 600; font-size: 9px; }
+  .badge { display: inline-block; border-radius: 99px; padding: 1px 7px; font-size: 8.5px; font-weight: 700; white-space: nowrap; }
+  .late { color: #b45309; font-size: 9px; }
+  .inc { color: #c2410c; font-size: 9px; font-weight: 600; margin-top: 2px; }
+  .cks { display: flex; flex-wrap: wrap; gap: 3px; margin-bottom: 2px; }
+  .ck { font-family: Consolas, monospace; background: #f1f5f9; border-radius: 3px; padding: 0 4px; }
+  .ck small { color: #6d28d9; font-family: "Segoe UI", sans-serif; font-weight: 600; }
+  .ck.dup { text-decoration: line-through; color: ${C.muted}; background: none; }
+  .just { margin-top: 3px; padding: 2px 5px; border-radius: 4px; font-size: 9px; }
+  .just.si { background: #e0f2fe; color: #075985; }
+  .just.no { background: #ffe4e6; color: #9f1239; }
+  .firmas { display: flex; gap: 60px; margin-top: 34px; padding: 0 40px; break-inside: avoid; }
+  .firmas div { flex: 1; border-top: 1px solid ${C.ink2}; padding-top: 4px; text-align: center; color: ${C.ink2}; font-size: 9.5px; }
+  .empty { text-align: center; padding: 40px; color: ${C.muted}; font-size: 13px; }
+</style></head><body>${people.join('') || '<p class="empty">No hay personas para mostrar en este periodo.</p>'}
+${autoPrint ? '<script>addEventListener("load", () => setTimeout(() => print(), 300));</script>' : ''}</body></html>`;
+}
+
+module.exports = { buildReportHtml, buildPersonasHtml };

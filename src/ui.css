@@ -34,6 +34,7 @@
     @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 shadow-xs
       placeholder:text-slate-400 focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none;
   }
+  .input[aria-invalid="true"] { @apply border-rose-400 bg-rose-50/40 focus:border-rose-500 focus:ring-rose-500/20; }
   .checkbox { @apply size-4 rounded border-slate-300 accent-brand-700; }
 
   .badge { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ring-1 ring-inset; }
@@ -66,7 +67,7 @@
 }
 
 dialog::backdrop { background: rgb(15 23 42 / 0.45); backdrop-filter: blur(2px); }
-dialog.drawer { margin: 0 0 0 auto; height: 100vh; max-height: 100vh; }
+dialog.drawer { margin: 0 0 0 auto; height: 100vh; max-height: 100vh; max-width: 100vw; }
 
 @media print {
   @page { margin: 12mm; }
@@ -76,5 +77,22 @@ dialog.drawer { margin: 0 0 0 auto; height: 100vh; max-height: 100vh; }
   .tbl thead th { position: static; }
 }
 
-/* Usuarios de solo consulta: sin botones para capturar o cambiar datos. */
-.solo-consulta :is([data-justify], [data-nombres], [data-baja]) { display: none !important; }
+/* Sin permiso: no se muestran los botones para capturar o cambiar datos. */
+.no-justificar [data-justify] { display: none !important; }
+.no-empleados :is([data-nombres], [data-baja], [data-vincular], [data-desvincular], [data-principal]) { display: none !important; }
+
+/* Tablas que en el celular se leen como tarjetas: cada celda muestra su título. */
+@media (max-width: 639px) {
+  .tbl-stack thead { display: none; }
+  .tbl-stack, .tbl-stack tbody, .tbl-stack tr, .tbl-stack td { display: block; width: 100%; }
+  .tbl-stack tbody tr { border-bottom: 1px solid var(--color-slate-200); padding: 8px 0; }
+  .tbl-stack tbody td { border: 0 !important; padding: 3px 12px !important; text-align: left !important; }
+  .tbl-stack td[data-label] { display: flex; gap: 12px; justify-content: space-between; align-items: baseline; }
+  .tbl-stack td[data-label]::before {
+    content: attr(data-label); flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--color-slate-500); text-transform: uppercase;
+  }
+  .tbl-stack td[data-label] > * { text-align: right; }
+  .tbl-stack td.stack-full { display: block; }
+  .tbl-stack td.stack-full::before { display: block; margin-bottom: 4px; }
+  .tbl-stack td.stack-full > * { text-align: left; }
+}

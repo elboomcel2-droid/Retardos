@@ -46,7 +46,7 @@ async function htmlToPdf(html) {
           `file:///${htmlFile.replace(/\\/g, '/')}`,
         ],
         { timeout: 90000, windowsHide: true },
-        (err) => (err && !fs.existsSync(pdfFile) ? reject(err) : resolve())
+        (err) => (err && !fs.existsSync(pdfFile) ? reject(Object.assign(new Error('No se pudo crear el PDF: el navegador tardó demasiado o se cerró. Intente de nuevo.'), { status: 500, tecnico: String(err.message) })) : resolve())
       );
     });
     if (!fs.existsSync(pdfFile)) throw new Error('No se pudo crear el PDF.');

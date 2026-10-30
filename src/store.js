@@ -52,6 +52,15 @@ const DEFAULT_SETTINGS = {
   mysql_port: 3306,
   mysql_user: '',
   mysql_password: '',
+  // Correo: servidor de salida (lo configura sistemas) y a quién se envía (RH).
+  smtp_host: '',
+  smtp_port: 587,
+  smtp_seguro: false,
+  smtp_user: '',
+  smtp_password: '',
+  smtp_remitente: '',
+  correo_rh: '',
+  correo_al_cerrar: true,
 };
 
 function open(file) {
@@ -135,6 +144,22 @@ function open(file) {
       ultimo_acceso TEXT
     );
 
+    -- Quincenas entregadas para pago: se guarda una copia exacta de cómo quedó
+    -- cada día para que nada de lo que se cambie después altere lo que se pagó.
+    CREATE TABLE IF NOT EXISTS cierres (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      desde TEXT NOT NULL,
+      hasta TEXT NOT NULL,
+      nota TEXT NOT NULL DEFAULT '',
+      cerrado_por TEXT NOT NULL,
+      cerrado_en TEXT NOT NULL,
+      copia TEXT NOT NULL,
+      reabierto_por TEXT,
+      reabierto_en TEXT,
+      motivo_reapertura TEXT,
+      correo TEXT
+    );
+
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id),
@@ -152,6 +177,14 @@ function open(file) {
   if (!db.prepare('PRAGMA table_info(employees)').all().some((c) => c.name === 'excluir')) {
     db.exec('ALTER TABLE employees ADD COLUMN excluir INTEGER NOT NULL DEFAULT 0');
   }
+
+  // Misma persona en otra sucursal: apunta a su registro principal ("sucursal|número").
+  if (!db.prepare('PRAGMA table_info(employees)').all().some((c) => c.name === 'principal')) {
+    db.exec('ALTER TABLE employees ADD COLUMN principal TEXT');
+  }
+
+  // El rol "Solo consulta" se dividió en Gerente y Dueño; quien lo tenía queda como Gerente.
+  db.prepare("UPDATE users SET rol = 'gerente' WHERE rol = 'consulta'").run();
 
   // Justificaciones: "no justificado" (solo nota) y hora hasta la que tenía permiso.
   const jCols = db.prepare('PRAGMA table_info(justifications)').all().map((c) => c.name);
@@ -321,6 +354,27 @@ class Store {
       );
   }
 
+  // Une el registro de una persona en otra sucursal con su registro principal.
+  // Siempre se apunta al principal del grupo (nunca cadenas de vínculos).
+  setPrincipal(branchId, code, principal) {
+    this.db
+      .prepare(
+        `INSERT INTO employees (branch_id, emp_code, principal) VALUES (?, ?, ?)
+         ON CONFLICT (branch_id, emp_code) DO UPDATE SET principal = excluded.principal`
+      )
+      .run(branchId, code, principal);
+  }
+
+  // Registros vinculados a un principal ("sucursal|número").
+  linkedTo(key) {
+    return this.db.prepare('SELECT * FROM employees WHERE principal = ?').all(key).map(parseEmployee);
+  }
+
+  employee(branchId, code) {
+    const r = this.db.prepare('SELECT * FROM employees WHERE branch_id = ? AND emp_code = ?').get(branchId, code);
+    return r ? parseEmployee(r) : null;
+  }
+
   // ---------- marcajes ----------
   insertPunches(branchId, list, source) {
     const st = this.db.prepare(
@@ -390,6 +444,43 @@ class Store {
 
   deleteJustification(id) {
     this.db.prepare('DELETE FROM justifications WHERE id = ?').run(id);
+  }
+
+  // ---------- cierres de quincena ----------
+  cierres() {
+    return this.db
+      .prepare('SELECT id, desde, hasta, nota, cerrado_por, cerrado_en, reabierto_por, reabierto_en, motivo_reapertura, correo FROM cierres ORDER BY desde DESC, id DESC')
+      .all();
+  }
+
+  cierre(id) {
+    const r = this.db.prepare('SELECT * FROM cierres WHERE id = ?').get(id);
+    return r ? { ...r, copia: JSON.parse(r.copia) } : null;
+  }
+
+  // Cierres vigentes (no reabiertos) que tocan el periodo; con su copia si se pide.
+  cierresEn(from, to, conCopia = true) {
+    const cols = conCopia ? '*' : 'id, desde, hasta, nota, cerrado_por, cerrado_en, correo';
+    return this.db
+      .prepare(`SELECT ${cols} FROM cierres WHERE reabierto_en IS NULL AND desde <= ? AND hasta >= ? ORDER BY desde`)
+      .all(to, from)
+      .map((r) => (conCopia ? { ...r, copia: JSON.parse(r.copia) } : r));
+  }
+
+  crearCierre({ desde, hasta, nota, autor, copia }) {
+    return Number(
+      this.db
+        .prepare('INSERT INTO cierres (desde, hasta, nota, cerrado_por, cerrado_en, copia) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(desde, hasta, nota || '', autor, now(), JSON.stringify(copia)).lastInsertRowid
+    );
+  }
+
+  reabrirCierre(id, autor, motivo) {
+    this.db.prepare('UPDATE cierres SET reabierto_por = ?, reabierto_en = ?, motivo_reapertura = ? WHERE id = ?').run(autor, now(), motivo, id);
+  }
+
+  marcarCorreo(id, texto) {
+    this.db.prepare('UPDATE cierres SET correo = ? WHERE id = ?').run(texto, id);
   }
 
   // ---------- usuarios y sesiones ----------

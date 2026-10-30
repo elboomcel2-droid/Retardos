@@ -89,9 +89,12 @@ function fullName(e) {
  * @param {string} p.to    fecha final YYYY-MM-DD
  * @param {string} p.today fecha de hoy YYYY-MM-DD (los días futuros no se evalúan)
  * @param {object[]} p.branches  sucursales a evaluar (con schedule y tolerancia_min)
+ * @param {object[]} [p.allBranches] todas las sucursales (para nombrar dónde checó
+ *   alguien que fue a otra sucursal); por omisión, p.branches
  * @param {object} p.settings
  * @param {object[]} p.employees
- * @param {object[]} p.punches   marcajes desde (from - dias_contexto) hasta to
+ * @param {object[]} p.punches   marcajes desde (from - dias_contexto) hasta to; pueden
+ *   incluir otras sucursales: cuentan para las personas vinculadas (employee.principal)
  * @param {object[]} p.holidays
  * @param {object[]} p.justifications
  */
@@ -101,38 +104,65 @@ function compute(p) {
   const holidays = new Map(p.holidays.map((h) => [h.fecha, h.descripcion]));
   const justif = new Map(p.justifications.map((j) => [`${j.branch_id}|${j.emp_code}|${j.fecha}`, j]));
   const empInfo = new Map(p.employees.map((e) => [`${e.branch_id}|${e.emp_code}`, e]));
+  const branchById = new Map((p.allBranches || p.branches).map((b) => [b.id, b]));
+  for (const b of p.branches) branchById.set(b.id, b);
+
+  // La misma persona puede tener número en varias sucursales (va a entregar,
+  // la mandan unos días a otra sucursal, la cambian). Sus registros se unen al
+  // principal: todas sus checadas cuentan como de una sola persona.
+  const ownerOf = (key) => {
+    const pr = empInfo.get(key)?.principal;
+    return pr && pr !== key && empInfo.has(pr) && !empInfo.get(pr).principal ? pr : key;
+  };
+
+  // Días en que el checador de cada sucursal registró al menos un marcaje.
+  const activeDays = new Map();
+  // Marcajes agrupados por persona (registro principal) y día.
+  const byOwner = new Map();
+  for (const x of p.punches) {
+    const day = x.punch_time.slice(0, 10);
+    if (!activeDays.has(x.branch_id)) activeDays.set(x.branch_id, new Set());
+    activeDays.get(x.branch_id).add(day);
+    const owner = ownerOf(`${x.branch_id}|${x.emp_code}`);
+    if (!byOwner.has(owner)) byOwner.set(owner, new Map());
+    const byDay = byOwner.get(owner);
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push({ t: x.punch_time, branch_id: x.branch_id });
+  }
+  // Registros vinculados a cada principal.
+  const groups = new Map();
+  for (const e of p.employees) {
+    const key = `${e.branch_id}|${e.emp_code}`;
+    const owner = ownerOf(key);
+    if (owner === key) continue;
+    if (!groups.has(owner)) groups.set(owner, []);
+    groups.get(owner).push(e);
+  }
 
   const days = [];
   const ausentes = [];
   const sinNombre = [];
+  const vinculos = [];
+  const workdays = (week, a, b) => eachDay(a, b).filter((d) => week[weekday(d)].laborable && !holidays.has(d)).length;
 
   for (const branch of p.branches) {
     const tolerance = branch.tolerancia_min ?? settings.tolerancia_min;
-    const bPunches = p.punches.filter((x) => x.branch_id === branch.id);
+    const branchActiveDays = activeDays.get(branch.id) || new Set();
 
-    // Días en que el checador de la sucursal registró al menos un marcaje.
-    const branchActiveDays = new Set(bPunches.map((x) => x.punch_time.slice(0, 10)));
-
-    // Marcajes agrupados por empleado y día.
-    const byEmp = new Map();
-    for (const x of bPunches) {
-      const code = String(x.emp_code);
-      if (!byEmp.has(code)) byEmp.set(code, new Map());
-      const byDay = byEmp.get(code);
-      const day = x.punch_time.slice(0, 10);
-      if (!byDay.has(day)) byDay.set(day, []);
-      byDay.get(day).push(x.punch_time);
-    }
-
-    // Empleados a evaluar: solo quienes checaron en el periodo o en los días de
+    // Personas a evaluar: solo quienes checaron en el periodo o en los días de
     // contexto previos. El checador conserva a mucha gente que ya no trabaja
     // (siguen "activos" allá), así que estar registrado no basta.
-    const codes = new Set(byEmp.keys());
-    const workdays = (week, a, b) => eachDay(a, b).filter((d) => week[weekday(d)].laborable && !holidays.has(d)).length;
+    const prefix = `${branch.id}|`;
+    const codes = [...byOwner.keys()].filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
 
     for (const code of codes) {
-      const info = empInfo.get(`${branch.id}|${code}`) || { emp_code: code, activo: true };
-      const byDay = byEmp.get(code) || new Map();
+      const ownerKey = prefix + code;
+      const info = empInfo.get(ownerKey) || { emp_code: code, activo: true };
+      const byDay = byOwner.get(ownerKey);
+      const linked = groups.get(ownerKey) || [];
+      // Justificaciones capturadas con cualquiera de sus números (por si cambió el principal).
+      const keys = [ownerKey, ...linked.map((e) => `${e.branch_id}|${e.emp_code}`)];
+      const justFor = (fecha) => keys.map((k) => justif.get(`${k}|${fecha}`)).find(Boolean);
       const punchedInRange = [...byDay.keys()].some((d) => d >= from && d <= to);
       if (info.excluir) continue;
       if (!info.activo && !punchedInRange) continue;
@@ -169,13 +199,28 @@ function compute(p) {
         }
         if (ausente.dias >= settings.dias_sin_checar) ausentes.push(ausente);
       }
+      if (linked.length) {
+        vinculos.push({
+          branch_id: branch.id,
+          emp_code: code,
+          otros: linked.map((e) => ({
+            branch_id: e.branch_id,
+            emp_code: e.emp_code,
+            sucursal: branchLabel(branchById.get(e.branch_id)),
+            checador: `${e.first_name || ''} ${e.last_name || ''}`.trim(),
+          })),
+        });
+      }
       const nombreIncompleto = !(info.alias || '').trim() && isShortName(info);
       if (nombreIncompleto) {
         sinNombre.push({ branch_id: branch.id, sucursal: `${branch.code} ${branch.name}`, emp_code: code, nombre: name });
       }
 
       for (const fecha of eachDay(from, to)) {
-        const raw = (byDay.get(fecha) || []).slice().sort();
+        const dayPunches = (byDay.get(fecha) || []).slice().sort((a, b) => a.t.localeCompare(b.t));
+        const raw = dayPunches.map((x) => x.t);
+        // Sucursal de cada checada cuando no fue en la suya.
+        const lugares = dayPunches.map((x) => (x.branch_id === branch.id ? null : branchLabel(branchById.get(x.branch_id))));
         const outsideEmployment = fecha < start || fecha > end;
         if (outsideEmployment && raw.length === 0) continue;
 
@@ -187,10 +232,11 @@ function compute(p) {
             name,
             sched: week[weekday(fecha)],
             raw,
+            lugares,
             tolerance,
             settings,
             holiday: holidays.get(fecha),
-            justification: justif.get(`${branch.id}|${code}|${fecha}`),
+            justification: justFor(fecha),
             future: fecha > evalTo,
             isToday: fecha === today,
             branchHasData: branchActiveDays.has(fecha),
@@ -201,13 +247,27 @@ function compute(p) {
     }
   }
 
-  days.sort(
+  sortDays(days);
+  ausentes.sort((a, b) => b.dias - a.dias);
+  sinNombre.sort((a, b) => a.sucursal.localeCompare(b.sucursal) || a.nombre.localeCompare(b.nombre, 'es'));
+  return { days, ...summaries(days, settings), ausentes, sinNombre, vinculos };
+}
+
+const branchLabel = (b) => (b ? `${b.code} ${b.name}` : 'otra sucursal');
+
+function sortDays(days) {
+  return days.sort(
     (a, b) =>
       a.sucursal_code.localeCompare(b.sucursal_code) ||
       a.nombre.localeCompare(b.nombre, 'es') ||
+      a.emp_code.localeCompare(b.emp_code) ||
       a.fecha.localeCompare(b.fecha)
   );
+}
 
+// Resúmenes por persona y por sucursal a partir de los días ya evaluados
+// (también se usa para armar periodos que incluyen quincenas cerradas).
+function summaries(days, settings) {
   const employees = summarize(days, settings, (d) => `${d.branch_id}|${d.emp_code}`, true);
   const branches = summarize(days, settings, (d) => d.branch_id, false);
   for (const b of branches) {
@@ -215,9 +275,7 @@ function compute(p) {
       .filter((e) => e.branch_id === b.branch_id)
       .reduce((n, e) => n + (e.faltas_por_retardos || 0), 0);
   }
-  ausentes.sort((a, b) => b.dias - a.dias);
-  sinNombre.sort((a, b) => a.sucursal.localeCompare(b.sucursal) || a.nombre.localeCompare(b.nombre, 'es'));
-  return { days, employees, branches, ausentes, sinNombre };
+  return { employees, branches };
 }
 
 function evaluateDay(c) {
@@ -229,6 +287,7 @@ function evaluateDay(c) {
   // Ej. con 10 min: 08:35, 08:37 y 08:44 → solo cuenta 08:35.
   const kept = [];
   const duplicadas = [];
+  const lugares = c.lugares || [];
   for (const t of raw) {
     const last = kept[kept.length - 1];
     if (last && toMin(t.slice(11)) - toMin(last.slice(11)) < settings.duplicado_min) duplicadas.push(t);
@@ -252,6 +311,8 @@ function evaluateDay(c) {
     horario: sched.laborable ? `${sched.entrada}–${sched.salida}` : 'Descanso',
     tolerancia_min: tolerance,
     checadas: raw.map((t) => t.slice(11, 19)),
+    // Sucursal de cada checada (null = en la suya). Solo se llena si checó en otra.
+    checadas_lugar: lugares.some(Boolean) ? lugares : null,
     duplicadas: duplicadas.map((t) => t.slice(11, 19)),
     entrada: null,
     comida_salida: null,
@@ -273,6 +334,9 @@ function evaluateDay(c) {
     notas,
     justificacion: null,
   };
+
+  const otras = [...new Set(lugares.filter((l, i) => l && !duplicadas.includes(raw[i])))];
+  if (otras.length) notas.push(`Checó en ${otras.join(' y ')}`);
 
   // 2. Identificar las 4 checadas: entrada, salida a comer, regreso de comer
   // y salida. Si faltan algunas, se deduce cuáles por la hora.
@@ -530,4 +594,4 @@ function summarize(days, settings, keyOf, perEmployee) {
     .sort((a, b) => a.sucursal_code.localeCompare(b.sucursal_code) || a.nombre.localeCompare(b.nombre, 'es'));
 }
 
-module.exports = { compute, evaluateDay, addDays, eachDay, isShortName, ESTADOS, DIAS };
+module.exports = { compute, evaluateDay, summaries, sortDays, addDays, eachDay, isShortName, ESTADOS, DIAS };

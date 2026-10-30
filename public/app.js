@@ -36,6 +36,12 @@ const ICONS = {
   config: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-2.82-1.17l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.2 14H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 2.82 1.17l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   bitacora: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
   usuarios: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  cierres: '<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  mail: '<rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-10 6L2 7"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  print: '<path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2M6 14h12v7H6z"/>',
+  pdf: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M9 15h6M9 11h2"/>',
   alert: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
@@ -44,17 +50,21 @@ const ICONS = {
 const icon = (name, cls = 'size-4') =>
   `<svg class="${cls} shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
 
-// Tercer dato: roles que ven la sección (sin él, todos).
+// ¿El usuario que inició sesión tiene este permiso? (la lista viene del servidor)
+const puede = (p) => !!state.me?.puede?.includes(p);
+
+// Tercer dato: permisos con los que se ve la sección (basta uno).
 const NAV = [
-  ['panel', 'Panel'],
-  ['empleados', 'Empleados'],
-  ['detalle', 'Detalle diario'],
-  ['datos', 'Cargar checadas', ['admin', 'rh']],
-  ['config', 'Configuración', ['admin', 'rh']],
-  ['bitacora', 'Historial', ['admin', 'rh']],
-  ['usuarios', 'Usuarios', ['admin']],
+  ['panel', 'Panel', ['ver']],
+  ['empleados', 'Empleados', ['ver']],
+  ['detalle', 'Detalle diario', ['ver']],
+  ['cierres', 'Cierre de quincena', ['ver']],
+  ['datos', 'Cargar checadas', ['importar']],
+  ['config', 'Configuración', ['reglas', 'correo', 'conexion']],
+  ['bitacora', 'Historial', ['historial']],
+  ['usuarios', 'Usuarios', ['usuarios']],
 ];
-const navFor = () => NAV.filter(([, , roles]) => !roles || roles.includes(state.me?.rol));
+const navFor = () => NAV.filter(([, , perms]) => perms.some(puede));
 
 // Nombre de quien inició sesión.
 function usuario() {
@@ -299,6 +309,7 @@ function viewPanel() {
 
   $('#view').innerHTML = `
     ${pageHeader('Panel de asistencia', periodText())}
+    ${cierreNotice(r)}
     <div class="mb-6 space-y-3">
       ${sinDatos.length ? notice('warn', `Hay días en que <b>nadie checó</b> en ${sinDatos.map((b) => `<b>${esc(b.sucursal)}</b>`).join(', ')}. Se marcan como <b>SIN DATOS</b> y no cuentan como falta: verifique que el checador esté encendido y que las checadas estén actualizadas.`) : ''}
       ${sinChecadas.map((b) => notice('warn', `<b>${esc(b.code)} ${esc(b.name)}</b> no tiene checadas en este periodo${b.cobertura ? `: la última que hay es del <b>${fmtDate(b.cobertura.hasta.slice(0, 10))}</b>` : ''}.
@@ -555,6 +566,30 @@ function bindLinks(root) {
     if ($('#drawer').open) $('#drawer').close();
     openNamesWizard(b.dataset.nombres || undefined);
   }));
+  $$('[data-vincular]', root).forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+    const [br, code] = b.dataset.vincular.split('|');
+    await showVincular(Number(br), code);
+  })));
+  $$('[data-desvincular]', root).forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+    const [br, code] = b.dataset.desvincular.split('|');
+    if (!confirm('¿Desvincular? Ese número volverá a contarse como otra persona.')) return;
+    await api(`/api/employees/${br}/${encodeURIComponent(code)}/desvincular`, { method: 'POST' });
+    toast('Desvinculado');
+    const s = $('[data-vincular]', root)?.dataset.vincular.split('|');
+    await afterVinculo(Number(s?.[0]), s?.[1]);
+  })));
+  $$('[data-principal]', root).forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+    const [br, code] = b.dataset.principal.split('|');
+    const suc = state.branches.find((x) => String(x.id) === br);
+    if (!confirm(`¿Esta persona ahora trabaja en ${suc ? suc.name : 'esa sucursal'}? A partir de ahora aparecerá en los reportes de esa sucursal (con todas sus checadas).`)) return;
+    await api(`/api/employees/${br}/${encodeURIComponent(code)}/principal`, { method: 'POST' });
+    toast('Sucursal cambiada');
+    await afterVinculo(Number(br), code);
+  })));
+  $$('[data-pdf-persona]', root).forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+    await download(`/api/reporte-personas.pdf?${query()}&emp=${encodeURIComponent(b.dataset.pdfPersona)}`, 'reporte.pdf');
+    toast('PDF descargado');
+  })));
   $$('[data-baja]', root).forEach((b) => b.addEventListener('click', () => busy(b, async () => {
     const [br, code, fecha] = b.dataset.baja.split('|');
     if (!confirm(`¿Dar de baja con fecha ${fmtDate(fecha)}? Después de ese día ya no se le contarán faltas. Se puede revertir en Configuración → Empleados.`)) return;
@@ -575,9 +610,40 @@ const EMP_COLS = [
 
 const matches = (q, ...fields) => !q || fields.join(' ').toLowerCase().includes(q);
 
+// Pestañas: "Resumen" (tabla de todos) y "Reporte por persona" (la ficha de
+// cada quien, completa, para que RH la imprima, descargue o envíe).
+state.empTab = 'resumen';
+state.personasSel = null; // null = todas
+
 function viewEmpleados() {
   const r = state.report;
-  if (!r.days.length) return ($('#view').innerHTML = pageHeader('Empleados', periodText()) + noData());
+  const tabs = `<div class="mb-4 flex gap-1 overflow-x-auto overflow-y-hidden border-b border-slate-200" role="tablist">
+    ${[['resumen', 'Resumen'], ['personas', 'Reporte por persona']].map(([k, l]) => `<button role="tab" aria-selected="${state.empTab === k}"
+      class="-mb-px border-b-2 px-4 py-2 text-sm font-medium whitespace-nowrap ${state.empTab === k ? 'border-brand-700 text-brand-700' : 'border-transparent text-slate-500 hover:text-slate-800'}" data-tab="${k}">${l}</button>`).join('')}
+  </div>`;
+  const header = pageHeader('Empleados', periodText()) + cierreNotice(r) + '<div id="dupNotice"></div>' + tabs;
+  if (!r.days.length) {
+    $('#view').innerHTML = header + noData();
+  } else if (state.empTab === 'personas') {
+    $('#view').innerHTML = header + personasTab(r);
+    bindPersonas(r);
+  } else {
+    $('#view').innerHTML = header + resumenTab(r);
+    $$('th[data-sort]').forEach((th) => th.addEventListener('click', () => {
+      const k = th.dataset.sort;
+      state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : k === 'nombre' ? 1 : -1 };
+      viewEmpleados();
+    }));
+  }
+  $$('[data-tab]').forEach((b) => b.addEventListener('click', () => {
+    state.empTab = b.dataset.tab;
+    viewEmpleados();
+  }));
+  bindLinks($('#view'));
+  duplicadosNotice();
+}
+
+function resumenTab(r) {
   const q = state.search.toLowerCase();
   const { key, dir } = state.sort;
   const list = r.employees
@@ -592,26 +658,139 @@ function viewEmpleados() {
     if (k === 'nombre') return `<div class="flex items-center gap-3"><span class="grid size-8 shrink-0 place-items-center rounded-full bg-brand-50 text-xs font-bold text-brand-700">${esc(initials(e.nombre))}</span>
       <div><div class="font-medium text-slate-900">${esc(e.nombre)}${e.nombre_incompleto ? completarLink(e.branch_id, e.emp_code) : ''}</div><div class="text-xs text-slate-500">${esc(e.sucursal)} · ${esc(e.emp_code)}</div></div></div>`;
     if (k === 'puntualidad') return `<span class="font-semibold ${tone(e.puntualidad).text}">${pct(e.puntualidad)}</span>`;
-    if (k === 'faltas' && (e.faltas || e.faltas_por_retardos)) return `<span class="font-semibold text-rose-700">${e.faltas}</span>${e.faltas_por_retardos ? `<div class="text-[11px] text-rose-700">+${e.faltas_por_retardos} por retardos</div>` : ''}`;
-    if (k === 'asistencias') return `${e.asistencias}<span class="text-slate-400">/${e.dias_laborables}</span>`;
-    if (k === 'retardos' && e.retardos) return `<span class="font-semibold text-amber-700">${e.retardos}</span><div class="text-[11px] text-slate-500">${e.minutos_retardo} min</div>`;
+    if (k === 'faltas' && (e.faltas || e.faltas_por_retardos)) return `<span><span class="font-semibold text-rose-700">${e.faltas}</span>${e.faltas_por_retardos ? `<span class="block text-[11px] text-rose-700">+${e.faltas_por_retardos} por retardos</span>` : ''}</span>`;
+    if (k === 'asistencias') return `<span>${e.asistencias}<span class="text-slate-400">/${e.dias_laborables}</span></span>`;
+    if (k === 'retardos' && e.retardos) return `<span><span class="font-semibold text-amber-700">${e.retardos}</span><span class="block text-[11px] text-slate-500">${e.minutos_retardo} min</span></span>`;
     const v = e[k] ?? 0;
     return v ? `<span class="${hl[k] ? `font-semibold ${hl[k]}` : ''}">${v}</span>` : '<span class="text-slate-300">0</span>';
   };
-  $('#view').innerHTML = `
-    ${pageHeader('Empleados', periodText())}
-    <p class="mb-3 text-sm text-slate-500">${list.length} empleado(s)${q ? ` que coinciden con "${esc(state.search)}"` : ''}. Haga clic en un renglón para ver sus checadas día por día; en los encabezados para ordenar.</p>
-    <div class="card overflow-hidden"><div class="max-h-[70vh] overflow-auto"><table class="tbl">
+  return `
+    <p class="mb-3 text-sm text-slate-500">${list.length} empleado(s)${q ? ` que coinciden con "${esc(state.search)}"` : ''}. Toque un renglón para ver sus checadas día por día; en los encabezados para ordenar.</p>
+    <div class="card overflow-hidden"><div class="max-h-[70vh] overflow-auto"><table class="tbl tbl-stack">
       <thead><tr>${EMP_COLS.map(([k, l, n]) => `<th class="cursor-pointer select-none hover:text-slate-800 ${n ? 'num' : ''}" data-sort="${k}">${l}${key === k ? (dir > 0 ? ' ↑' : ' ↓') : ''}</th>`).join('')}</tr></thead>
       <tbody>${list.map((e) => `<tr class="row-link" data-emp="${e.branch_id}|${esc(e.emp_code)}">
-        ${EMP_COLS.map(([k, , n]) => `<td class="${n ? 'num' : ''}">${cell(e, k)}</td>`).join('')}</tr>`).join('')}
+        ${EMP_COLS.map(([k, l, n]) => `<td class="${n ? 'num' : ''}" ${k === 'nombre' ? '' : `data-label="${esc(l)}"`}>${cell(e, k)}</td>`).join('')}</tr>`).join('')}
       </tbody></table></div></div>`;
-  $$('th[data-sort]').forEach((th) => th.addEventListener('click', () => {
-    const k = th.dataset.sort;
-    state.sort = { key: k, dir: state.sort.key === k ? -state.sort.dir : k === 'nombre' ? 1 : -1 };
+}
+
+// Personas de la pestaña (según el buscador) y cuáles están marcadas.
+function personasList(r) {
+  const q = state.search.toLowerCase();
+  return r.employees.filter((e) => matches(q, e.nombre, e.emp_code));
+}
+const empKey = (e) => `${e.branch_id}|${e.emp_code}`;
+const isSel = (e) => !state.personasSel || state.personasSel.has(empKey(e));
+
+// Parámetro "emp" para el servidor; vacío = todas las del periodo y sucursal.
+function personasParam(r) {
+  const list = personasList(r).filter(isSel);
+  if (list.length === r.employees.length) return '';
+  return `&emp=${encodeURIComponent(list.map(empKey).join(','))}`;
+}
+
+const PREVIEW_MAX = 15;
+
+function personasTab(r) {
+  const list = personasList(r);
+  const sel = list.filter(isSel);
+  const byEmp = new Map();
+  for (const d of r.days) {
+    const k = empKey(d);
+    if (!byEmp.has(k)) byEmp.set(k, []);
+    byEmp.get(k).push(d);
+  }
+  const card = (s) => {
+    const days = byEmp.get(empKey(s)) || [];
+    return `<article class="card overflow-hidden">
+      <div class="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
+        <div class="flex min-w-0 items-center gap-3">
+          <span class="grid size-10 shrink-0 place-items-center rounded-full bg-brand-700 text-sm font-bold text-white">${esc(initials(s.nombre))}</span>
+          <div class="min-w-0"><h3 class="font-bold break-words text-slate-900">${esc(s.nombre)}${s.nombre_incompleto ? completarLink(s.branch_id, s.emp_code) : ''}</h3>
+            <p class="text-xs text-slate-500">${esc(s.sucursal)} · No. ${esc(s.emp_code)} · ${fmtDate(r.from)} al ${fmtDate(r.to)}</p></div></div>
+        <div class="flex gap-1"><button class="btn btn-secondary btn-sm" data-emp-link="${empKey(s)}">Abrir ficha</button>
+          <button class="btn btn-secondary btn-sm" data-pdf-persona="${empKey(s)}">${icon('pdf')} PDF</button></div>
+      </div>
+      <div class="space-y-4 bg-slate-50/60 p-3 sm:p-5">${employeeTiles(s, days)}${dayTable(days)}</div>
+    </article>`;
+  };
+  return `
+    <p class="mb-4 max-w-3xl text-sm text-slate-500">Cada persona con todos sus días del periodo: horario, entrada, comida, salida, horas, resultado, checadas y la explicación.
+      Elija a quién incluir y descárguelo en PDF, imprímalo${puede('correo') ? ' o envíelo por correo' : ''}. El PDF trae una hoja por persona con espacio para firmas.</p>
+    <div class="grid gap-5 lg:grid-cols-[280px_1fr]">
+      <aside class="card self-start lg:sticky lg:top-28">
+        <div class="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+          <span class="text-sm font-semibold text-slate-900">${sel.length} de ${list.length} persona(s)</span>
+          <span class="flex gap-1"><button class="btn btn-ghost btn-sm" data-sel="all">Todas</button><button class="btn btn-ghost btn-sm" data-sel="none">Ninguna</button></span>
+        </div>
+        <div class="max-h-56 overflow-auto px-2 py-2 lg:max-h-[50vh]">
+          ${list.map((e) => `<label class="flex cursor-pointer items-start gap-2 rounded-lg px-2 py-1.5 hover:bg-slate-50">
+            <input type="checkbox" class="checkbox mt-0.5" data-pick="${empKey(e)}" ${isSel(e) ? 'checked' : ''}>
+            <span class="min-w-0 text-sm"><span class="block font-medium break-words text-slate-800">${esc(e.nombre)}</span>
+              <span class="block text-xs text-slate-500">${esc(e.sucursal)} · ${e.retardos} ret. · ${e.faltas} faltas</span></span></label>`).join('')}
+        </div>
+        <div class="grid gap-2 border-t border-slate-100 p-3">
+          <button class="btn btn-primary" id="pPdf" ${sel.length ? '' : 'disabled'}>${icon('pdf')} Descargar PDF</button>
+          <button class="btn btn-secondary" id="pPrint" ${sel.length ? '' : 'disabled'}>${icon('print')} Imprimir</button>
+          ${puede('correo') ? `<button class="btn btn-secondary" id="pMail" ${sel.length ? '' : 'disabled'}>${icon('mail')} Enviar por correo a RH</button>` : ''}
+        </div>
+      </aside>
+      <div class="min-w-0 space-y-5">
+        ${sel.length ? sel.slice(0, PREVIEW_MAX).map(card).join('') : emptyState('Nadie seleccionado', 'Marque a las personas que quiere ver en el reporte.')}
+        ${sel.length > PREVIEW_MAX ? notice('info', `Aquí se muestran las primeras ${PREVIEW_MAX} personas para que la pantalla no se haga lenta. El PDF, la impresión y el correo incluyen a las <b>${sel.length}</b>.`) : ''}
+      </div>
+    </div>`;
+}
+
+function bindPersonas(r) {
+  const list = personasList(r);
+  $$('[data-sel]').forEach((b) => b.addEventListener('click', () => {
+    state.personasSel = b.dataset.sel === 'all' ? null : new Set();
     viewEmpleados();
   }));
-  bindLinks($('#view'));
+  $$('[data-pick]').forEach((c) => c.addEventListener('change', () => {
+    if (!state.personasSel) state.personasSel = new Set(r.employees.map(empKey));
+    c.checked ? state.personasSel.add(c.dataset.pick) : state.personasSel.delete(c.dataset.pick);
+    if (state.personasSel.size === r.employees.length) state.personasSel = null;
+    viewEmpleados();
+  }));
+  const sel = list.filter(isSel);
+  $('#pPdf')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+    await download(`/api/reporte-personas.pdf?${query()}${personasParam(r)}`, 'reporte-por-persona.pdf');
+    toast('PDF descargado');
+  }));
+  $('#pPrint')?.addEventListener('click', () => window.open(`/reporte/personas?${query()}${personasParam(r)}&imprimir=1`, '_blank'));
+  $('#pMail')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+    const emp = personasParam(r).replace('&emp=', '');
+    const out = await api('/api/correo/enviar', { method: 'POST', body: {
+      from: $('#from').value, to: $('#to').value, branch: $('#branch').value, emp: emp ? decodeURIComponent(emp) : '', incluir: ['personas'],
+    } });
+    toast(`Reporte de ${sel.length} persona(s) enviado a ${out.destinatarios.join(', ')}`);
+  }));
+}
+
+// Mismo nombre en dos sucursales sin vincular: probablemente es la misma persona.
+async function duplicadosNotice() {
+  if (!puede('empleados')) return;
+  let grupos;
+  try {
+    grupos = await api('/api/employees/duplicados');
+  } catch {
+    return;
+  }
+  const box = $('#dupNotice');
+  if (!box || !grupos.length) return;
+  box.innerHTML = `<div class="mb-4">${notice('info', `<b>¿La misma persona en dos sucursales?</b> Estos nombres aparecen en más de un checador. Si es la misma persona, vincúlelos para que cuente una sola vez
+    (y no le salgan faltas en una sucursal los días que checó en la otra).
+    <ul class="mt-2 space-y-1.5">${grupos.map((g) => `<li class="flex flex-wrap items-center gap-2"><span><b>${esc(g[0].nombre)}</b>: ${g.map((e) => `${esc(e.sucursal)} No. ${esc(e.emp_code)}`).join(' · ')}</span>
+      <button class="btn btn-secondary btn-sm" data-dup="${g.map((e) => `${e.branch_id}|${esc(e.emp_code)}`).join(',')}">Es la misma persona</button></li>`).join('')}</ul>`)}</div>`;
+  $$('[data-dup]', box).forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+    const [base, ...otros] = b.dataset.dup.split(',');
+    const [br, code] = base.split('|');
+    if (!confirm('Se unirán como una sola persona; su sucursal será la primera de la lista (puede cambiarla en su ficha con "Ahora trabaja aquí"). ¿Continuar?')) return;
+    for (const o of otros) await api(`/api/employees/${br}/${encodeURIComponent(code)}/vincular`, { method: 'POST', body: { con: o } });
+    toast('Registros vinculados');
+    await refresh();
+  })));
 }
 
 // ---------------------------------------------------------------- Detalle diario
@@ -623,11 +802,15 @@ function justBox(j) {
     : `<div class="mt-1.5 rounded-md bg-rose-50 px-2 py-1 text-xs text-rose-800">✖ <b>No justificado</b>: ${esc(j.nota)} ${quien}</div>`;
 }
 
-function dayRow(d, withEmployee = true) {
+// Etiqueta corta de la sucursal donde checó (cuando fue en otra): "03 ACAPULCO" → "ACAPULCO".
+const lugarTag = (l) => (l ? ` <span class="font-sans text-[10px] font-semibold text-violet-700" title="Checó en ${esc(l)}">${esc(l.slice(3))}</span>` : '');
+
+// interactive = false: solo lectura (vista para imprimir dentro de la pantalla).
+function dayRow(d, withEmployee = true, interactive = true) {
   const checadas = d.checadas.length
-    ? d.checadas.map((t) => (d.duplicadas.includes(t)
+    ? d.checadas.map((t, i) => (d.duplicadas.includes(t)
         ? `<span class="text-slate-400 line-through" title="Checada repetida: no se tomó en cuenta">${t.slice(0, 5)}</span>`
-        : `<span class="rounded bg-slate-100 px-1.5 py-0.5 text-slate-700">${t.slice(0, 5)}</span>`)).join(' ')
+        : `<span class="rounded bg-slate-100 px-1.5 py-0.5 text-slate-700">${t.slice(0, 5)}${lugarTag(d.checadas_lugar?.[i])}</span>`)).join(' ')
     : '<span class="text-slate-400">sin checadas</span>';
   const canJustify =
     !['DESCANSO', 'FESTIVO', 'PENDIENTE', 'PUNTUAL', 'DÍA EXTRA'].includes(d.estado) || (d.estado === 'PUNTUAL' && d.incidencias.length > 0);
@@ -635,27 +818,38 @@ function dayRow(d, withEmployee = true) {
     ? `${d.comida_salida.slice(0, 5)}–${d.comida_regreso?.slice(0, 5) || '?'}${d.comida_min != null
         ? `<div class="text-xs ${d.exceso_comida_min ? 'font-semibold text-rose-700' : 'text-slate-500'}">${d.comida_min} min</div>` : ''}`
     : '—';
+  const accion = !interactive ? ''
+    : d.cerrado ? `<div class="mt-2 inline-flex items-center gap-1 text-[11px] text-slate-500" title="La quincena ya se cerró: no se puede cambiar">${icon('lock', 'size-3')} Quincena cerrada</div>`
+    : canJustify || d.justificacion ? `<button class="btn btn-secondary btn-sm mt-2 print:hidden" data-justify="${d.branch_id}|${esc(d.emp_code)}|${d.fecha}">${d.justificacion ? 'Editar nota' : 'Justificar o anotar'}</button>` : '';
   return `<tr class="hover:bg-slate-50/70">
-    <td class="whitespace-nowrap"><div class="font-medium text-slate-900">${fmtDate(d.fecha)}</div><div class="text-xs text-slate-500">${d.dia}</div></td>
+    <td class="whitespace-nowrap max-sm:bg-slate-50 max-sm:!py-2"><div class="font-medium text-slate-900 max-sm:inline">${fmtDate(d.fecha)}</div> <div class="text-xs text-slate-500 max-sm:inline">${d.dia}</div></td>
     ${withEmployee ? `<td><button class="text-left font-medium text-brand-700 hover:underline" data-emp-link="${d.branch_id}|${esc(d.emp_code)}">${esc(d.nombre)}</button>${d.nombre_incompleto ? completarLink(d.branch_id, d.emp_code) : ''}
       <div class="text-xs text-slate-500">${esc(d.sucursal)} · ${esc(d.emp_code)}</div></td>` : ''}
-    <td><div class="whitespace-nowrap">${esc(d.horario)}</div></td>
-    <td class="tabular-nums">${d.entrada?.slice(0, 5) || '—'}</td>
-    <td class="whitespace-nowrap tabular-nums">${comida}</td>
-    <td class="tabular-nums">${d.salida?.slice(0, 5) || '—'}</td>
-    <td class="tabular-nums">${d.horas || '—'}</td>
-    <td><div class="flex flex-wrap items-center gap-1">${badge(d.estado)}${d.retardo_min ? `<span class="text-xs font-bold text-amber-700">+${d.retardo_min} min</span>` : ''}</div>
+    <td data-label="Horario"><div class="whitespace-nowrap">${esc(d.horario)}</div></td>
+    <td data-label="Entrada" class="tabular-nums"><span>${d.entrada?.slice(0, 5) || '—'}</span></td>
+    <td data-label="Comida" class="whitespace-nowrap tabular-nums"><div>${comida}</div></td>
+    <td data-label="Salida" class="tabular-nums"><span>${d.salida?.slice(0, 5) || '—'}</span></td>
+    <td data-label="Horas" class="tabular-nums"><span>${d.horas || '—'}</span></td>
+    <td data-label="Resultado"><div><div class="flex flex-wrap items-center gap-1 max-sm:justify-end">${badge(d.estado)}${d.retardo_min ? `<span class="text-xs font-bold text-amber-700">+${d.retardo_min} min</span>` : ''}</div>
       ${d.estado_original ? `<div class="mt-1 text-[11px] text-slate-500">antes era: ${esc(d.estado_original)}</div>` : ''}
       ${d.incidencias.map((i) => `<div class="mt-1 text-[11px] font-medium text-orange-700">${esc(i)}</div>`).join('')}
-      ${canJustify || d.justificacion ? `<button class="btn btn-secondary btn-sm mt-2 print:hidden" data-justify="${d.branch_id}|${esc(d.emp_code)}|${d.fecha}">${d.justificacion ? 'Editar nota' : 'Justificar o anotar'}</button>` : ''}</td>
-    <td class="min-w-48"><div class="flex flex-wrap gap-1 font-mono text-xs">${checadas}</div>
+      ${accion}</div></td>
+    <td data-label="Checadas" class="stack-full min-w-48"><div><div class="flex flex-wrap gap-1 font-mono text-xs">${checadas}</div>
       <div class="mt-1.5 text-xs text-slate-500">${esc(d.regla)}${d.notas.length ? ` · ${esc(d.notas.join(' · '))}` : ''}</div>
-      ${justBox(d.justificacion)}</td>
+      ${justBox(d.justificacion)}</div></td>
   </tr>`;
 }
 
 const dayHead = (withEmployee = true) => `<thead><tr><th>Fecha</th>${withEmployee ? '<th>Empleado</th>' : ''}<th>Horario</th><th>Entrada</th><th>Comida</th><th>Salida</th><th>Horas trabajadas</th>
   <th>Resultado</th><th>Checadas del día y explicación</th></tr></thead>`;
+
+// Aviso cuando el periodo incluye una quincena ya cerrada.
+function cierreNotice(r) {
+  if (!r?.cierres?.length) return '';
+  return `<div class="mb-4 flex items-start gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900">${icon('lock', 'size-5 mt-px')}<div>
+    ${r.cierres.map((c) => `La quincena del <b>${fmtDate(c.desde)} al ${fmtDate(c.hasta)}</b> se cerró el ${fmtDate(c.cerrado_en.slice(0, 10))} por <b>${esc(c.cerrado_por)}</b>`).join('; ')}.
+    Esos días se muestran tal como se entregaron para pago y no se pueden cambiar${puede('reabrir') ? ' (puede reabrirla en <button class="font-semibold underline" data-goto="cierres">Cierre de quincena</button>)' : ''}.</div></div>`;
+}
 
 // Descanso, festivo y pendiente no requieren revisión: no se ofrecen como filtro.
 const FILTROS_DETALLE = ['RETARDO', 'FALTA', 'INCOMPLETO', 'JUSTIFICADO', 'DÍA EXTRA', 'SIN DATOS', 'PUNTUAL'];
@@ -669,13 +863,14 @@ function viewDetalle() {
   const shown = list.slice(0, 1500);
   $('#view').innerHTML = `
     ${pageHeader('Detalle diario', periodText() + (q ? ` · "${esc(state.search)}"` : ''))}
+    ${cierreNotice(r)}
     <div class="mb-4 flex flex-wrap gap-2 print:hidden">
       <span class="self-center text-xs text-slate-500">Mostrar:</span>
       ${FILTROS_DETALLE.map((e) => `<button class="chip ${state.estadoFilter.has(e) ? 'on' : ''}" data-estado="${e}">${e}
         <span class="rounded-full px-1.5 text-[10px] ${state.estadoFilter.has(e) ? 'bg-white/20' : 'bg-slate-100'}">${counts[e]}</span></button>`).join('')}
     </div>
     <p class="mb-3 text-sm text-slate-500">${list.length} registro(s)${list.length > shown.length ? ` — se muestran los primeros ${shown.length}; filtre por sucursal o empleado, o exporte a Excel para ver todo` : ''}.</p>
-    <div class="card overflow-hidden"><div class="max-h-[72vh] overflow-auto"><table class="tbl">${dayHead()}<tbody>${shown.map((d) => dayRow(d)).join('')}</tbody></table></div></div>`;
+    <div class="card overflow-hidden"><div class="max-h-[72vh] overflow-auto"><table class="tbl tbl-stack">${dayHead()}<tbody>${shown.map((d) => dayRow(d)).join('')}</tbody></table></div></div>`;
   $$('[data-estado]').forEach((b) => b.addEventListener('click', () => {
     const e = b.dataset.estado;
     state.estadoFilter.has(e) ? state.estadoFilter.delete(e) : state.estadoFilter.add(e);
@@ -685,32 +880,110 @@ function viewDetalle() {
 }
 
 // ---------------------------------------------------------------- Ficha de empleado y justificación
+// Indicadores y días de una persona: la ficha lateral y el Reporte por persona
+// muestran exactamente lo mismo.
+function employeeTiles(s, days) {
+  const trabajados = days.reduce((n, d) => n + (d.minutos || 0), 0);
+  return `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+    ${[['Puntualidad', pct(s.puntualidad), tone(s.puntualidad).text], ['Retardos', s.retardos, 'text-amber-600', `${s.minutos_retardo} min`], ['Faltas', s.faltas, 'text-rose-600'],
+       ['Faltas por retardos', s.faltas_por_retardos ?? 0, 'text-rose-600'], ['Checadas incompletas', s.incompletos + s.sin_salida, 'text-orange-600'],
+       ['Se pasó en la comida', s.excesos_comida, 'text-rose-600', s.minutos_exceso_comida ? `${s.minutos_exceso_comida} min de más` : ''], ['No checó comida', s.comida_sin_checar, 'text-orange-600'],
+       ['Justificados', s.justificados, 'text-sky-600'], ['Días extra', s.dias_extra, 'text-violet-600', s.minutos_extra ? hrs(s.minutos_extra) : ''],
+       ['Horas trabajadas', hrs(trabajados), 'text-slate-900', 'sin contar comida']]
+      .map(([l, v, c, sub]) => `<div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] text-slate-500">${l}</div>
+        <div class="text-xl font-bold tabular-nums ${c}">${v}</div>${sub ? `<div class="text-[11px] text-slate-500">${sub}</div>` : ''}</div>`).join('')}
+  </div>`;
+}
+
+const dayTable = (days, interactive = true) =>
+  `<div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl tbl-stack">${dayHead(false)}<tbody>${days.map((d) => dayRow(d, false, interactive)).join('')}</tbody></table></div></div>`;
+
+// Otros números de la misma persona en otras sucursales.
+function vinculosBox(s) {
+  const v = state.report.vinculos?.find((x) => x.branch_id === s.branch_id && x.emp_code === s.emp_code);
+  const otros = v?.otros || [];
+  if (!otros.length && !puede('empleados')) return '';
+  return `<div class="rounded-xl border border-violet-200 bg-violet-50/60 px-4 py-3 text-sm text-violet-950">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <div class="flex items-center gap-2 font-semibold">${icon('link')} ${otros.length ? 'También checa en otras sucursales' : '¿Checa también en otra sucursal?'}</div>
+      <button class="btn btn-secondary btn-sm" data-vincular="${s.branch_id}|${esc(s.emp_code)}">Vincular otro número</button>
+    </div>
+    ${otros.length ? `<ul class="mt-2 space-y-1.5">${otros.map((o) => `<li class="flex flex-wrap items-center gap-2">
+        <span><b>${esc(o.sucursal)}</b> · No. ${esc(o.emp_code)}${o.checador ? ` (en el checador: ${esc(o.checador)})` : ''}</span>
+        <button class="rounded px-1.5 text-xs text-violet-800 underline hover:bg-violet-100" data-principal="${o.branch_id}|${esc(o.emp_code)}" title="Se cambió de sucursal: a partir de ahora aparece en ${esc(o.sucursal)}">Ahora trabaja aquí</button>
+        <button class="rounded px-1.5 text-xs text-rose-700 underline hover:bg-rose-50" data-desvincular="${o.branch_id}|${esc(o.emp_code)}">Desvincular</button></li>`).join('')}</ul>
+      <p class="mt-2 text-xs text-violet-800">Las checadas de esos números cuentan como de esta persona: si un día checó allá, no es falta aquí.</p>`
+    : '<p class="mt-1 text-xs text-violet-800">Si esta persona también tiene número en el checador de otra sucursal (va a entregar o la mandan unos días), vincúlelo para que cuente como una sola persona.</p>'}
+  </div>`;
+}
+
 function showEmployee(branchId, code) {
   const r = state.report;
   const s = r.employees.find((e) => e.branch_id === branchId && e.emp_code === code);
   if (!s) return;
   const days = r.days.filter((d) => d.branch_id === branchId && d.emp_code === code);
   openDialog('drawer', `
-    <div class="sticky top-0 z-20 flex items-start justify-between gap-4 border-b border-slate-200 bg-white px-6 py-5">
-      <div class="flex items-center gap-4">
-        <span class="grid size-12 place-items-center rounded-full bg-brand-700 text-base font-bold text-white">${esc(initials(s.nombre))}</span>
-        <div><h2 class="text-xl font-bold text-slate-900">${esc(s.nombre)}${s.nombre_incompleto ? completarLink(s.branch_id, code) : ''}</h2>
+    <div class="sticky top-0 z-20 flex items-start justify-between gap-3 border-b border-slate-200 bg-white px-4 py-4 sm:px-6 sm:py-5">
+      <div class="flex min-w-0 items-center gap-3 sm:gap-4">
+        <span class="grid size-10 shrink-0 place-items-center rounded-full bg-brand-700 text-base font-bold text-white sm:size-12">${esc(initials(s.nombre))}</span>
+        <div class="min-w-0"><h2 class="text-lg font-bold break-words text-slate-900 sm:text-xl">${esc(s.nombre)}${s.nombre_incompleto ? completarLink(s.branch_id, code) : ''}</h2>
           <p class="text-sm text-slate-500">${esc(s.sucursal)} · código ${esc(code)} · ${fmtDate(r.from)} al ${fmtDate(r.to)}</p></div>
-      </div>${closeBtn}
-    </div>
-    <div class="space-y-6 p-6">
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        ${[['Puntualidad', pct(s.puntualidad), tone(s.puntualidad).text], ['Retardos', s.retardos, 'text-amber-600', `${s.minutos_retardo} min`], ['Faltas', s.faltas, 'text-rose-600'],
-           ['Faltas por retardos', s.faltas_por_retardos ?? 0, 'text-rose-600'], ['Checadas incompletas', s.incompletos + s.sin_salida, 'text-orange-600'],
-           ['Se pasó en la comida', s.excesos_comida, 'text-rose-600', s.minutos_exceso_comida ? `${s.minutos_exceso_comida} min de más` : ''], ['No checó comida', s.comida_sin_checar, 'text-orange-600'],
-           ['Justificados', s.justificados, 'text-sky-600'], ['Días extra', s.dias_extra, 'text-violet-600', s.minutos_extra ? hrs(s.minutos_extra) : '']]
-          .map(([l, v, c, sub]) => `<div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] text-slate-500">${l}</div>
-            <div class="text-xl font-bold tabular-nums ${c}">${v}</div>${sub ? `<div class="text-[11px] text-slate-500">${sub}</div>` : ''}</div>`).join('')}
       </div>
+      <div class="flex shrink-0 items-start gap-1">
+        <button class="btn btn-secondary btn-sm max-sm:hidden" data-pdf-persona="${branchId}|${esc(code)}" title="Este mismo reporte en PDF">${icon('pdf')} PDF</button>${closeBtn}</div>
+    </div>
+    <div class="space-y-6 p-4 sm:p-6">
+      ${cierreNotice(r)}
+      ${employeeTiles(s, days)}
       <div>${stackBar(s, 'h-2.5')}</div>
-      <div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl">${dayHead(false)}<tbody>${days.map((d) => dayRow(d, false)).join('')}</tbody></table></div></div>
+      ${vinculosBox(s)}
+      ${dayTable(days)}
     </div>`);
   bindLinks($('#drawerBody'));
+}
+
+// Elegir otro número (de otra sucursal) que es la misma persona.
+async function showVincular(branchId, code) {
+  const all = await api('/api/employees');
+  const bName = Object.fromEntries(state.branches.map((b) => [b.id, `${b.code} ${b.name}`]));
+  const base = all.find((e) => e.branch_id === branchId && e.emp_code === code);
+  const baseKey = `${branchId}|${code}`;
+  const nombreDe = (e) => e.alias || `${e.first_name} ${e.last_name}`.trim() || `No. ${e.emp_code}`;
+  const candidatos = all
+    .filter((e) => `${e.branch_id}|${e.emp_code}` !== baseKey && e.principal !== baseKey && !e.excluir)
+    .sort((a, b) => (a.branch_id === branchId) - (b.branch_id === branchId) || nombreDe(a).localeCompare(nombreDe(b), 'es'));
+  openDialog('modal', `
+    <div class="mb-4 flex items-start justify-between gap-4"><div>
+      <h2 class="text-lg font-bold text-slate-900">Vincular con otra sucursal</h2>
+      <p class="text-sm text-slate-500">${esc(nombreDe(base || { emp_code: code }))} · ${esc(bName[branchId])}. Elija su número en el checador de la otra sucursal.</p></div>${closeBtn}</div>
+    <input id="vSearch" class="input mb-3" placeholder="Buscar por nombre, número o sucursal…" autocomplete="off">
+    <div class="max-h-[50vh] divide-y divide-slate-100 overflow-auto rounded-xl border border-slate-200" id="vList">
+      ${candidatos.map((e) => `<button class="flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-brand-50" data-v="${e.branch_id}|${esc(e.emp_code)}"
+          data-text="${esc(`${nombreDe(e)} ${e.first_name} ${e.last_name} ${e.emp_code} ${bName[e.branch_id]}`.toLowerCase())}">
+        <span><span class="block text-sm font-medium text-slate-900">${esc(nombreDe(e))}</span>
+          <span class="block text-xs text-slate-500">${esc(bName[e.branch_id])} · No. ${esc(e.emp_code)}${e.alias ? ` · en el checador: ${esc(`${e.first_name} ${e.last_name}`.trim())}` : ''}${e.principal ? ' · ya vinculado a otra persona' : ''}</span></span>
+        <span class="shrink-0 text-xs font-semibold text-brand-700">Elegir</span></button>`).join('') || '<p class="p-4 text-sm text-slate-500">No hay otros registros.</p>'}
+    </div>`);
+  $('#vSearch').focus();
+  $('#vSearch').addEventListener('input', (ev) => {
+    const q = norm(ev.target.value);
+    $$('#vList [data-v]').forEach((b) => (b.style.display = norm(b.dataset.text).includes(q) ? '' : 'none'));
+  });
+  $$('#vList [data-v]').forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+    if (!confirm('¿Es la misma persona? Sus checadas en ambas sucursales contarán como de una sola persona.')) return;
+    await api(`/api/employees/${branchId}/${encodeURIComponent(code)}/vincular`, { method: 'POST', body: { con: b.dataset.v } });
+    $('#modal').close();
+    toast('Registros vinculados');
+    await afterVinculo(branchId, code);
+  })));
+}
+
+// Tras vincular o cambiar de sucursal, se recalcula y se vuelve a abrir la ficha.
+async function afterVinculo(branchId, code) {
+  const drawerOpen = $('#drawer').open;
+  await refresh();
+  if (drawerOpen && state.report?.employees.some((e) => e.branch_id === branchId && e.emp_code === code)) showEmployee(branchId, code);
+  else if (drawerOpen) $('#drawer').close();
 }
 
 async function showJustify(branchId, code, fecha) {
@@ -783,6 +1056,123 @@ async function afterJustify(msg, branchId, code) {
   toast(msg);
   await refresh();
   if (drawerOpen) showEmployee(branchId, code);
+}
+
+// ---------------------------------------------------------------- Cierre de quincena
+// Una vez pagada la quincena, RH la cierra: se guarda tal como quedó y ya no se
+// puede justificar ni cambiar nada de esos días (solo reabriéndola).
+function quincenasRecientes(n = 8) {
+  const out = [];
+  const t = new Date();
+  let y = t.getFullYear(), m = t.getMonth(), primera = t.getDate() <= 15;
+  for (let i = 0; i < n; i++) {
+    const desde = new Date(y, m, primera ? 1 : 16);
+    const hasta = primera ? new Date(y, m, 15) : new Date(y, m + 1, 0);
+    out.push({ desde: iso(desde), hasta: iso(hasta) });
+    if (primera) { m -= 1; if (m < 0) { m = 11; y -= 1; } }
+    primera = !primera;
+  }
+  return out;
+}
+
+function verPeriodo(desde, hasta, view = 'panel') {
+  $('#preset').value = 'custom';
+  $('#from').value = desde;
+  $('#to').value = hasta;
+  $('#branch').value = 'all';
+  return go(view);
+}
+
+async function viewCierres() {
+  const cierres = await api('/api/cierres');
+  const hoy = iso(new Date());
+  const vigente = (q) => cierres.find((c) => !c.reabierto_en && c.desde <= q.hasta && c.hasta >= q.desde);
+  const correoTxt = (c) => (c.correo ? `<div class="mt-1 text-xs ${c.correo.startsWith('No se') ? 'text-rose-700' : 'text-slate-500'}">${icon('mail', 'size-3 inline')} ${esc(c.correo)}</div>` : '');
+  const filas = quincenasRecientes().map((q) => {
+    const c = vigente(q);
+    const enCurso = q.hasta >= hoy;
+    const estado = c
+      ? `<span class="badge bg-sky-50 text-sky-700 ring-sky-600/20">${icon('lock', 'size-3')} CERRADA</span>
+         <div class="mt-1 text-xs text-slate-500">el ${fmtDate(c.cerrado_en.slice(0, 10))} ${c.cerrado_en.slice(11, 16)} por <b>${esc(c.cerrado_por)}</b>${c.nota ? ` · ${esc(c.nota)}` : ''}</div>${correoTxt(c)}`
+      : q.desde > hoy ? '<span class="badge bg-slate-100 text-slate-400 ring-slate-300/40">AÚN NO EMPIEZA</span>'
+      : enCurso ? '<span class="badge bg-amber-50 text-amber-800 ring-amber-600/25">EN CURSO</span>'
+      : '<span class="badge bg-slate-50 text-slate-600 ring-slate-400/40">ABIERTA</span><div class="mt-1 text-xs text-slate-500">Se puede seguir justificando</div>';
+    const acciones = [
+      q.desde <= hoy ? `<button class="btn btn-secondary btn-sm" data-ver="${q.desde}|${q.hasta}">Ver reporte</button>` : '',
+      c && puede('reabrir') ? `<button class="btn btn-danger btn-sm" data-reabrir="${c.id}">Reabrir</button>` : '',
+      !c && q.hasta <= hoy && puede('cerrar') ? `<button class="btn btn-primary btn-sm" data-cerrar="${q.desde}|${q.hasta}">${icon('lock')} Cerrar quincena</button>` : '',
+    ].join(' ');
+    return `<tr><td data-label="Quincena" class="font-medium whitespace-nowrap text-slate-900"><span>${fmtDate(q.desde)} al ${fmtDate(q.hasta)}</span></td>
+      <td data-label="Estado" class="stack-full"><div>${estado}</div></td><td><div class="flex flex-wrap gap-1.5">${acciones}</div></td></tr>`;
+  }).join('');
+  const reabiertas = cierres.filter((c) => c.reabierto_en);
+  $('#view').innerHTML = `
+    ${pageHeader('Cierre de quincena', 'Cuando la quincena ya se pagó, ciérrela: queda guardada tal como se entregó y nadie puede justificar ni cambiar esos días.')}
+    <div class="mb-6 grid gap-3 text-sm text-slate-600 md:grid-cols-3">
+      ${[['1', 'Revise', 'Justifique o anote las faltas, retardos y checadas incompletas de la quincena.'],
+         ['2', 'Pague', 'Descargue o imprima el reporte (general y por persona) y realice el pago.'],
+         ['3', 'Cierre', `Pulse <b>Cerrar quincena</b>. Se guarda una copia y, si el correo está configurado, se envía el PDF a RH. Si hubo un error, ${Object.values(state.roles).filter((r) => r.puede.includes('reabrir')).map((r) => r.nombre).join(' o ')} la puede reabrir.`]]
+        .map(([n, t, d]) => `<div class="card card-pad flex gap-3"><span class="grid size-7 shrink-0 place-items-center rounded-full bg-brand-700 text-xs font-bold text-white">${n}</span><div><b class="text-slate-900">${t}</b><p class="mt-0.5">${d}</p></div></div>`).join('')}
+    </div>
+    <div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl tbl-stack"><thead><tr><th>Quincena</th><th>Estado</th><th></th></tr></thead><tbody>${filas}</tbody></table></div></div>
+    ${reabiertas.length ? `<details class="card mt-6"><summary class="cursor-pointer px-5 py-4 text-sm font-semibold text-slate-900">Quincenas que se reabrieron (${reabiertas.length})</summary>
+      <ul class="divide-y divide-slate-100 border-t border-slate-100 text-sm">${reabiertas.map((c) => `<li class="px-5 py-3"><b>${fmtDate(c.desde)} al ${fmtDate(c.hasta)}</b>:
+        cerrada por ${esc(c.cerrado_por)} el ${fmtDate(c.cerrado_en.slice(0, 10))}; reabierta por <b>${esc(c.reabierto_por)}</b> el ${fmtDate(c.reabierto_en.slice(0, 10))}.
+        <span class="text-slate-500">Motivo: ${esc(c.motivo_reapertura)}</span></li>`).join('')}</ul></details>` : ''}`;
+  $$('[data-ver]').forEach((b) => b.addEventListener('click', () => verPeriodo(...b.dataset.ver.split('|'))));
+  $$('[data-cerrar]').forEach((b) => b.addEventListener('click', () => busy(b, () => showCerrar(...b.dataset.cerrar.split('|')))));
+  $$('[data-reabrir]').forEach((b) => b.addEventListener('click', () => {
+    const c = cierres.find((x) => String(x.id) === b.dataset.reabrir);
+    const motivo = prompt(`¿Por qué se reabre la quincena del ${fmtDate(c.desde)} al ${fmtDate(c.hasta)}?\nQuedará en el historial. Después de corregir, ciérrela de nuevo.`);
+    if (motivo === null) return;
+    busy(b, async () => {
+      await api(`/api/cierres/${c.id}/reabrir`, { method: 'POST', body: { motivo } });
+      toast('Quincena reabierta');
+      await viewCierres();
+    });
+  }));
+}
+
+async function showCerrar(desde, hasta) {
+  const [r, s] = await Promise.all([api(`/api/report?from=${desde}&to=${hasta}&branch=all`), api('/api/settings')]);
+  const T = r.employees.reduce((t, e) => {
+    for (const k of ['retardos', 'faltas', 'justificados', 'incompletos', 'sin_salida']) t[k] += e[k];
+    return t;
+  }, { retardos: 0, faltas: 0, justificados: 0, incompletos: 0, sin_salida: 0 });
+  const porRevisar = r.days.filter((d) => ['FALTA', 'INCOMPLETO', 'RETARDO'].includes(d.estado) && !d.justificacion).length;
+  const hoy = iso(new Date());
+  const destinatarios = (s.correo_rh || '').split(/[,;\s]+/).filter(Boolean);
+  const puedeEnviar = s.correo_configurado && destinatarios.length > 0;
+  openDialog('modal', `
+    <div class="mb-4 flex items-start justify-between gap-4"><div>
+      <h2 class="text-lg font-bold text-slate-900">Cerrar la quincena del ${fmtDate(desde)} al ${fmtDate(hasta)}</h2>
+      <p class="text-sm text-slate-500">Todas las sucursales. Después de cerrarla nadie podrá justificar ni borrar notas de estos días.</p></div>${closeBtn}</div>
+    <div class="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+      ${[['Personas', r.employees.length], ['Retardos', T.retardos], ['Faltas', T.faltas], ['Justificados', T.justificados]]
+        .map(([l, v]) => `<div class="rounded-xl border border-slate-200 p-3"><div class="text-[11px] text-slate-500">${l}</div><div class="text-xl font-bold tabular-nums">${v}</div></div>`).join('')}
+    </div>
+    ${porRevisar ? `<div class="mb-4">${notice('warn', `Hay <b>${porRevisar}</b> día(s) con retardo, falta o checada incompleta <b>sin nota</b>. Si alguno tenía permiso, justifíquelo antes de cerrar. <button class="font-semibold underline" id="cRevisar">Revisar en el detalle diario →</button>`)}</div>` : ''}
+    ${hasta === hoy ? `<div class="mb-4">${notice('warn', 'La quincena termina <b>hoy</b>: las checadas que falten de hoy ya no se tomarán en cuenta.')}</div>` : ''}
+    <label class="field mb-4">Nota (opcional)<input id="cNota" class="input" maxlength="300" placeholder="Ej. Pagada en efectivo el ${fmtDate(hasta)}"></label>
+    <label class="mb-2 flex items-start gap-2 text-sm ${puedeEnviar ? '' : 'opacity-60'}">
+      <input type="checkbox" class="checkbox mt-0.5" id="cEnviar" ${puedeEnviar && s.correo_al_cerrar ? 'checked' : ''} ${puedeEnviar ? '' : 'disabled'}>
+      <span>Enviar el reporte en PDF (general y por persona) por correo${puedeEnviar ? ` a <b>${esc(destinatarios.join(', '))}</b>` : ''}
+        ${puedeEnviar ? '' : `<span class="block text-xs text-slate-500">${s.correo_configurado ? 'Falta escribir a quién enviarlo en Configuración → Envío por correo.' : 'El correo todavía no está configurado (lo hace sistemas en Configuración).'}</span>`}</span></label>
+    <div class="mt-6 flex flex-wrap justify-end gap-2">
+      <button class="btn btn-secondary" data-close>Cancelar</button>
+      <button class="btn btn-primary" id="cOk">${icon('lock')} Cerrar quincena</button></div>`);
+  $('#cRevisar')?.addEventListener('click', () => {
+    $('#modal').close();
+    state.estadoFilter = new Set(['RETARDO', 'FALTA', 'INCOMPLETO']);
+    verPeriodo(desde, hasta, 'detalle');
+  });
+  $('#cOk').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+    const out = await api('/api/cierres', { method: 'POST', body: { desde, hasta, nota: $('#cNota').value, enviar: $('#cEnviar').checked } });
+    $('#modal').close();
+    toast(out.correo ? `Quincena cerrada. Se está enviando el PDF a ${out.correo.join(', ')} (tarda unos segundos; el resultado queda en esta pantalla).` : 'Quincena cerrada');
+    await viewCierres();
+    if (out.correo) setTimeout(() => state.view === 'cierres' && viewCierres(), 20000);
+  }));
 }
 
 // ---------------------------------------------------------------- Datos
@@ -938,10 +1328,17 @@ async function viewConfig() {
   const inp = (name, label, val, type = 'text', extra = '') =>
     `<label class="field">${label}<input class="input" name="${name}" type="${type}" value="${esc(val)}" ${extra}></label>`;
 
+  const R = puede('reglas');
+  const empByKey = Object.fromEntries(employees.map((e) => [`${e.branch_id}|${e.emp_code}`, e]));
+  const nombreDeKey = (k) => {
+    const e = empByKey[k];
+    return e ? `${e.alias || `${e.first_name} ${e.last_name}`.trim()} (${bName[e.branch_id]}, No. ${e.emp_code})` : k;
+  };
+  const destinatarios = (s.correo_rh || '').split(/[,;\s]+/).filter(Boolean);
   $('#view').innerHTML = `
-    ${pageHeader('Configuración', 'Horarios, reglas de puntualidad, días festivos y empleados.')}
+    ${pageHeader('Configuración', 'Horarios, reglas de puntualidad, días festivos, empleados y envío por correo.')}
 
-    ${section('Reglas de puntualidad', 'Se aplican a todas las sucursales.',
+    ${!R ? '' : section('Reglas de puntualidad', 'Se aplican a todas las sucursales.',
       `<div id="ruleForm" class="space-y-5">
         <div><h3 class="mb-2 text-sm font-semibold text-slate-700">Llegada</h3>
           <div class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -971,7 +1368,7 @@ async function viewConfig() {
           </div></div>
         <button id="saveRules" class="btn btn-primary">Guardar reglas</button></div>`)}
 
-    <div class="mb-3 flex flex-wrap items-end justify-between gap-3">
+    ${!R ? '' : `<div class="mb-3 flex flex-wrap items-end justify-between gap-3">
       <div class="max-w-3xl"><h2 class="text-base font-semibold text-slate-900">Horarios por sucursal</h2>
         <p class="text-sm text-slate-500">El domingo no es día de trabajo: quien cheque ese día aparece como <b>día extra</b>.
         Si alguien trabaja todos los domingos (por ejemplo vigilancia), dele un horario especial en la sección Empleados, más abajo.</p></div>
@@ -985,13 +1382,13 @@ async function viewConfig() {
           <input class="input" name="tolerancia_min" type="number" min="0" value="${b.tolerancia_min ?? ''}" placeholder="Igual que la regla general (${s.tolerancia_min} min)"></label>
         ${schedTable('b' + b.id, b.schedule)}
         <div class="mt-4"><button class="btn btn-primary btn-sm" data-save-branch>Guardar horario</button></div>
-      </div>`).join('')}</div>
+      </div>`).join('')}</div>`}
 
-    ${section('Actualización automática (en vivo)', 'Mientras el sistema esté abierto, trae solo las checadas del día en los horarios en que la gente checa. Fuera de esos horarios no consulta, para no saturar el servidor de los checadores. El plan se calcula con los horarios de las sucursales.',
+    ${!R ? '' : section('Actualización automática (en vivo)', 'Mientras el sistema esté abierto, trae solo las checadas del día en los horarios en que la gente checa. Fuera de esos horarios no consulta, para no saturar el servidor de los checadores. El plan se calcula con los horarios de las sucursales.',
       `<label class="mb-4 flex items-center gap-2 text-sm"><input type="checkbox" class="checkbox" id="autoSync" ${s.auto_sync ? 'checked' : ''}> Actualizar automáticamente en horario laboral</label>
       <div id="livePlan" class="text-sm text-slate-500">Cargando plan…</div>`)}
 
-    ${section('Días festivos', 'Esos días nadie tiene falta; quien cheque aparece como día extra.',
+    ${!R ? '' : section('Días festivos', 'Esos días nadie tiene falta; quien cheque aparece como día extra.',
       `<div class="grid items-end gap-3 sm:grid-cols-[180px_1fr] lg:grid-cols-[180px_1fr_auto_auto]">
         <label class="field">Fecha<input type="date" id="hFecha" class="input"></label><label class="field">Nombre del día<input id="hDesc" class="input" placeholder="Ej. Día del Trabajo"></label>
         <button id="hAdd" class="btn btn-primary">Agregar</button><button id="hLft" class="btn btn-secondary">Agregar los festivos oficiales de ${new Date().getFullYear()}</button></div>
@@ -999,13 +1396,30 @@ async function viewConfig() {
         <b class="tabular-nums">${fmtDate(h.fecha)}</b> ${esc(h.descripcion)}
         <button class="grid size-6 place-items-center rounded-full text-slate-400 hover:bg-rose-100 hover:text-rose-600" data-del-holiday="${h.fecha}" title="Quitar">${icon('x', 'size-3.5')}</button></span>`).join('') || '<span class="text-sm text-slate-400">No hay días festivos registrados.</span>'}</div>`)}
 
-    ${section('Empleados', 'La lista se llena sola con las personas que checan. En el checador los nombres van abreviados (con nombres largos aparecen símbolos raros); escriba aquí el nombre completo para que salga en los reportes. Esto solo se guarda en este sistema: el checador no se modifica. También puede marcar bajas (después de esa fecha ya no se cuentan faltas), corregir la fecha de ingreso o darle un horario especial.',
+    ${!R ? '' : section('Ajustes del cálculo', 'Detalles de cómo se interpretan las checadas. Normalmente no hay que cambiarlos.',
+      `<div id="advForm" class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        ${inp('cerca_salida_min', 'Con 3 checadas, la última se toma como salida si es a menos de estos min de la hora de salida', s.cerca_salida_min, 'number', 'min="0"')}
+        ${inp('dias_contexto', 'Días hacia atrás para saber quién sigue activo', s.dias_contexto, 'number', 'min="0"')}
+        ${inp('dias_sin_checar', 'Avisar si alguien lleva estos días de trabajo sin checar', s.dias_sin_checar, 'number', 'min="1"')}
+        <button id="saveAdv" class="btn btn-primary">Guardar ajustes</button></div>`)}
+
+    ${!puede('correo') ? '' : section('Envío por correo', `Correos que reciben el reporte en PDF (general y por persona): al cerrar una quincena y cuando alguien pulse <b>Enviar por correo</b>.
+      ${s.correo_configurado ? '' : '<b class="text-amber-700">El servidor de correo todavía no está configurado: pídalo a sistemas.</b>'}`,
+      `<div id="mailForm" class="grid items-end gap-4 lg:grid-cols-[1fr_auto]">
+        <label class="field">Enviar a (separe con comas)<input class="input" name="correo_rh" value="${esc(s.correo_rh)}" placeholder="rh@elboom.com.mx, nomina@elboom.com.mx" inputmode="email" autocomplete="off"></label>
+        <div class="flex flex-wrap gap-2"><button id="saveMail" class="btn btn-primary">Guardar</button>
+          <button id="testMail" class="btn btn-secondary" ${s.correo_configurado && destinatarios.length ? '' : 'disabled'}>${icon('mail')} Enviar correo de prueba</button></div>
+        <label class="flex items-center gap-2 text-sm text-slate-700 lg:col-span-2"><input type="checkbox" class="checkbox" name="correo_al_cerrar" ${s.correo_al_cerrar ? 'checked' : ''}>
+          Enviar automáticamente el reporte al cerrar cada quincena</label></div>`)}
+
+    ${!puede('empleados') ? '' : section('Empleados', 'La lista se llena sola con las personas que checan. En el checador los nombres van abreviados (con nombres largos aparecen símbolos raros); escriba aquí el nombre completo para que salga en los reportes. Esto solo se guarda en este sistema: el checador no se modifica. También puede marcar bajas (después de esa fecha ya no se cuentan faltas), corregir la fecha de ingreso o darle un horario especial.',
       `<div class="relative mb-3 w-full max-w-72"><span class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-slate-400">${icon('search')}</span>
         <input id="empSearch" class="input pl-9" placeholder="Buscar empleado…"></div>
-      <div class="max-h-[60vh] overflow-auto rounded-xl border border-slate-200"><table class="tbl"><thead><tr><th>Nombre completo</th><th>Trabaja aquí</th><th>Ingreso / baja</th><th>Horario</th><th>Notas</th><th></th></tr></thead>
+      <div class="max-h-[60vh] overflow-auto rounded-xl border border-slate-200"><table class="tbl tbl-stack"><thead><tr><th>Nombre completo</th><th>Trabaja aquí</th><th>Ingreso / baja</th><th>Horario</th><th>Notas</th><th></th></tr></thead>
       <tbody id="empBody">${employees.map((e) => `<tr data-emp-row="${e.branch_id}|${esc(e.emp_code)}" data-text="${esc(`${e.alias} ${e.first_name} ${e.last_name} ${e.emp_code}`.toLowerCase())}">
         <td class="min-w-56"><input class="input px-2 py-1 font-medium ${!e.alias && `${e.first_name}${e.last_name}`.replace(/\s/g, '').length <= 4 ? 'border-amber-400 bg-amber-50' : ''}" name="alias" value="${esc(e.alias)}" placeholder="${esc(`${e.first_name} ${e.last_name}`.trim() || 'Escriba el nombre')}" title="Nombre completo para los reportes">
-          <div class="mt-1 text-xs text-slate-500">${esc(bName[e.branch_id])} · No. ${esc(e.emp_code)}${e.alias ? ` · en el checador: ${esc(`${e.first_name} ${e.last_name}`.trim())}` : ''}</div></td>
+          <div class="mt-1 text-xs text-slate-500">${esc(bName[e.branch_id])} · No. ${esc(e.emp_code)}${e.alias ? ` · en el checador: ${esc(`${e.first_name} ${e.last_name}`.trim())}` : ''}</div>
+          ${e.principal ? `<div class="mt-1 text-xs font-medium text-violet-700">${icon('link', 'size-3 inline')} Es la misma persona que ${esc(nombreDeKey(e.principal))}: sus checadas cuentan allá</div>` : ''}</td>
         <td class="text-center"><input type="checkbox" class="checkbox" name="activo" ${e.activo ? 'checked' : ''} aria-label="Trabaja aquí">
           <label class="mt-2 flex items-center justify-center gap-1 text-[11px] whitespace-nowrap text-slate-500" title="Cuentas como ADMIN o SISTEMAS: no se evalúan"><input type="checkbox" class="checkbox" name="excluir" ${e.excluir ? 'checked' : ''}> No es persona</label></td>
         <td><label class="field">Ingreso<input type="date" class="input w-36 px-2 py-1" name="fecha_alta" value="${esc(e.fecha_alta || '')}"></label>
@@ -1014,10 +1428,10 @@ async function viewConfig() {
         <td><input class="input min-w-32 px-2 py-1" name="notas" value="${esc(e.notas)}"></td><td><button class="btn btn-primary btn-sm" data-emp-save>Guardar</button></td></tr>`).join('')
         || '<tr><td colspan="6" class="py-8 text-center text-slate-400">Todavía no hay empleados. Aparecerán al cargar las checadas.</td></tr>'}</tbody></table></div>`)}
 
-    ${state.me.rol !== 'admin' ? '' : `<details class="card mb-6 group">
+    ${!puede('conexion') ? '' : `<details class="card mb-6 group">
       <summary class="flex cursor-pointer list-none items-center justify-between gap-3 p-5">
         <div><h2 class="text-base font-semibold text-slate-900">Opciones avanzadas</h2>
-          <p class="text-sm text-slate-500">Solo para el área de sistemas: conexión con los checadores. Normalmente no hay que tocar nada aquí.</p></div>
+          <p class="text-sm text-slate-500">Solo para el área de sistemas: conexión con los checadores y servidor de correo. Normalmente no hay que tocar nada aquí.</p></div>
         <span class="text-slate-400 transition group-open:rotate-180">▾</span>
       </summary>
       <div class="space-y-6 border-t border-slate-100 p-5">
@@ -1040,12 +1454,14 @@ async function viewConfig() {
             </div>`).join('')}</div>
         </div>
         <div>
-          <h3 class="mb-3 text-sm font-semibold text-slate-900">Ajustes del cálculo</h3>
-          <div id="advForm" class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            ${inp('cerca_salida_min', 'Con 3 checadas, la última se toma como salida si es a menos de estos min de la hora de salida', s.cerca_salida_min, 'number', 'min="0"')}
-            ${inp('dias_contexto', 'Días hacia atrás para saber quién sigue activo', s.dias_contexto, 'number', 'min="0"')}
-            ${inp('dias_sin_checar', 'Avisar si alguien lleva estos días de trabajo sin checar', s.dias_sin_checar, 'number', 'min="1"')}
-            <button id="saveAdv" class="btn btn-primary">Guardar ajustes</button></div>
+          <h3 class="mb-1 text-sm font-semibold text-slate-900">Servidor de correo (SMTP)</h3>
+          <p class="mb-3 text-xs text-slate-500">Cuenta desde la que salen los reportes. Con Gmail o Microsoft 365 use una "contraseña de aplicación". Puerto 587 (normal) o 465 (cifrado desde el inicio).</p>
+          <div id="smtpForm" class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            ${inp('smtp_host', 'Servidor', s.smtp_host, 'text', 'placeholder="smtp.gmail.com, mail.sudominio.com"')}${inp('smtp_port', 'Puerto', s.smtp_port, 'number')}
+            ${inp('smtp_remitente', 'Remitente', s.smtp_remitente, 'text', 'placeholder="Asistencia El Boom &lt;asistencia@elboom.com.mx&gt;"')}
+            ${inp('smtp_user', 'Usuario', s.smtp_user, 'text', 'autocomplete="off"')}${inp('smtp_password', 'Contraseña', s.smtp_password, 'password', 'autocomplete="new-password"')}
+            <label class="flex items-center gap-2 pb-2 text-sm text-slate-700"><input type="checkbox" class="checkbox" name="smtp_seguro" ${s.smtp_seguro ? 'checked' : ''}> Conexión cifrada desde el inicio (SSL)</label>
+            <button id="saveSmtp" class="btn btn-primary">Guardar servidor de correo</button></div>
         </div>
         <details class="text-sm"><summary class="cursor-pointer font-medium text-brand-700">Consulta SQL para exportar checadas a mano</summary>
 <pre class="mt-2 overflow-auto rounded-lg bg-slate-900 p-3 font-mono text-xs leading-relaxed text-slate-100">SELECT ("01 ALPUYECA") AS tienda,
@@ -1059,22 +1475,36 @@ ORDER BY iclock_transaction.punch_time ASC;</pre></details>
       </div>
     </details>`}`;
 
-  const formData = (root) => Object.fromEntries($$('input, select', root).filter((i) => i.name).map((i) => [i.name, i.value]));
+  const formData = (root) => Object.fromEntries($('input, select', root).filter((i) => i.name).map((i) => [i.name, i.type === 'checkbox' ? i.checked : i.value]));
+  $('#saveSmtp')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+    await api('/api/settings', { method: 'PUT', body: formData($('#smtpForm')) });
+    toast('Servidor de correo guardado');
+    await viewConfig();
+  }));
+  $('#saveMail')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+    await api('/api/settings', { method: 'PUT', body: formData($('#mailForm')) });
+    toast('Lista de correo guardada');
+    await viewConfig();
+  }));
+  $('#testMail')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+    const out = await api('/api/correo/prueba', { method: 'POST' });
+    toast(`Correo de prueba enviado a ${out.destinatarios.join(', ')}`);
+  }));
   // Las opciones avanzadas solo existen para el administrador.
   $('#saveConn')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
     await api('/api/settings', { method: 'PUT', body: formData($('#connForm')) });
     toast('Conexión guardada');
   }));
-  $('#saveRules').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+  $('#saveRules')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
     await api('/api/settings', { method: 'PUT', body: formData($('#ruleForm')) });
     toast('Reglas guardadas');
   }));
-  $('#autoSync').addEventListener('change', (ev) => busy(ev.currentTarget, async () => {
+  $('#autoSync')?.addEventListener('change', (ev) => busy(ev.currentTarget, async () => {
     await api('/api/settings', { method: 'PUT', body: { auto_sync: ev.target.checked } });
     toast(ev.target.checked ? 'Actualización automática activada' : 'Actualización automática desactivada');
     pollLive();
   }));
-  api('/api/live/semana').then((plan) => {
+  if (R) api('/api/live/semana').then((plan) => {
     const hoy = iso(new Date());
     $('#livePlan').innerHTML = `<div class="overflow-x-auto"><table class="tbl"><thead><tr><th>Día</th><th>Horarios de consulta</th></tr></thead><tbody>${plan.map((d) => `
       <tr class="${d.fecha === hoy ? 'bg-brand-50/60' : ''}"><td class="font-medium whitespace-nowrap capitalize text-slate-900">${d.dia}${d.fecha === hoy ? ' <span class="text-xs font-normal text-brand-700">(hoy)</span>' : ''}</td>
@@ -1108,13 +1538,17 @@ ORDER BY iclock_transaction.punch_time ASC;</pre></details>
       await loadBranches();
       try {
         const r = await api(`/api/branches/${row.dataset.dbRow}/test`, { method: 'POST' });
-        out.innerHTML = `<span class="text-emerald-700">✔ Conexión correcta: ${r.empleados} empleados y ${r.marcajes.toLocaleString('es-MX')} checadas guardadas en el checador.</span>`;
+        const p = r.permisos;
+        out.innerHTML = `<span class="text-emerald-700">✔ Conexión correcta: ${r.empleados} empleados y ${r.marcajes.toLocaleString('es-MX')} checadas guardadas en el checador.</span>
+          ${p && !p.solo_lectura ? `<div class="mt-1 rounded-lg bg-amber-50 p-2 text-amber-900">⚠ <b>El usuario de MySQL tiene más permisos de los necesarios</b> (el sistema solo lee, pero un error o una contraseña filtrada podría dañar otras bases).
+            Cree un usuario con permiso <b>solo SELECT</b> sobre las bases de los checadores y póngalo arriba.<pre class="mt-1 overflow-auto text-[11px] whitespace-pre-wrap">${esc(p.sobrantes.join('\n'))}</pre></div>`
+          : p ? '<div class="mt-1 text-emerald-700">✔ El usuario solo tiene permiso de lectura: correcto.</div>' : ''}`;
       } catch (e) {
         out.innerHTML = `<span class="text-rose-700">✖ ${esc(e.message)}</span>`;
       }
     }));
   });
-  $('#copyAll').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+  $('#copyAll')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
     const cards = $$('[data-branch]');
     const week = readSched(cards[0], 'b' + cards[0].dataset.branch);
     if (!confirm(`¿Usar el horario de ${state.branches[0].name} en todas las sucursales?`)) return;
@@ -1130,11 +1564,11 @@ ORDER BY iclock_transaction.punch_time ASC;</pre></details>
     await loadBranches();
     toast('Horario aplicado a todas las sucursales');
   }));
-  $('#hAdd').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+  $('#hAdd')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
     await api('/api/holidays', { method: 'POST', body: { fecha: $('#hFecha').value, descripcion: $('#hDesc').value } });
     await viewConfig();
   }));
-  $('#hLft').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+  $('#hLft')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
     for (const [fecha, descripcion] of feriadosLFT(new Date().getFullYear())) {
       await api('/api/holidays', { method: 'POST', body: { fecha, descripcion } });
     }
@@ -1145,11 +1579,10 @@ ORDER BY iclock_transaction.punch_time ASC;</pre></details>
     await api(`/api/holidays/${b.dataset.delHoliday}`, { method: 'DELETE' });
     await viewConfig();
   })));
-  $('#empSearch').addEventListener('input', (ev) => {
+  $('#empSearch')?.addEventListener('input', (ev) => {
     const q = ev.target.value.toLowerCase();
     $$('#empBody tr[data-text]').forEach((tr) => (tr.style.display = tr.dataset.text.includes(q) ? '' : 'none'));
   });
-  const empByKey = Object.fromEntries(employees.map((e) => [`${e.branch_id}|${e.emp_code}`, e]));
   $$('[data-emp-row]').forEach((tr) => {
     const e = empByKey[tr.dataset.empRow];
     const save = (schedule) =>
@@ -1215,6 +1648,17 @@ const SETTING_LABELS = {
   mysql_port: 'puerto',
   mysql_user: 'usuario del servidor',
   mysql_password: 'contraseña del servidor',
+  smtp_host: 'servidor de correo',
+  smtp_port: 'puerto de correo',
+  smtp_user: 'usuario de correo',
+  smtp_password: 'contraseña de correo',
+  smtp_remitente: 'remitente de correo',
+  smtp_seguro: 'correo cifrado (SSL)',
+  correo_rh: 'correos que reciben el reporte',
+  correo_al_cerrar: 'enviar al cerrar quincena',
+  auto_sync: 'actualización automática',
+  retardo_desde: 'retardo contado desde',
+  comida_desde: 'hora de comida desde',
 };
 
 // Convierte cada registro del historial en una frase que cualquiera entienda.
@@ -1241,7 +1685,7 @@ function describeAudit(r, names, branches) {
     case 'Importación de archivo':
       return `Subió el archivo <b>${esc(d.archivo)}</b>: ${(d.results || []).map((x) => `${esc(x.sucursal)} ${x.nuevos} nuevas`).join(', ')}${d.errores ? ` · ${d.errores} renglón(es) con error` : ''}`;
     case 'Configuración':
-      return `Cambió ${Object.entries(d).map(([k, v]) => `${esc(SETTING_LABELS[k] || k)}${k === 'mysql_password' ? '' : ` a <b>${esc(v)}</b>`}`).join(', ')}`;
+      return `Cambió ${Object.entries(d).map(([k, v]) => `${esc(SETTING_LABELS[k] || k)}${/_password$/.test(k) ? '' : ` a <b>${esc(v)}</b>`}`).join(', ')}`;
     case 'Sucursal actualizada':
       return `Cambió el horario o los datos de <b>${esc(d.sucursal)}</b>`;
     case 'Empleado actualizado':
@@ -1258,11 +1702,37 @@ function describeAudit(r, names, branches) {
       return `Agregó el día festivo ${fmtDate(d.fecha)} (${esc(d.descripcion)})`;
     case 'Festivo eliminado':
       return `Quitó el día festivo ${fmtDate(d.fecha)}`;
+    case 'Quincena cerrada':
+      return `<b>Cerró la quincena</b> del ${fmtDate(d.desde)} al ${fmtDate(d.hasta)} (${d.personas} personas, ${d.retardos} retardos, ${d.faltas} faltas)${d.nota ? `: ${esc(d.nota)}` : ''}`;
+    case 'Quincena reabierta':
+      return `<span class="text-rose-700"><b>Reabrió la quincena</b> del ${fmtDate(d.desde)} al ${fmtDate(d.hasta)}</span>. Motivo: ${esc(d.motivo)}`;
+    case 'Reporte enviado por correo':
+      return `Envió por correo el reporte del ${fmtDate(d.desde)} al ${fmtDate(d.hasta)} · ${esc(d.sucursal)} a <b>${esc((d.destinatarios || []).join(', '))}</b>`;
+    case 'Correo de prueba':
+      return `Envió un correo de prueba a ${esc((d.destinatarios || []).join(', '))}`;
+    case 'Error al enviar correo':
+      return `<span class="text-rose-700">No se pudo enviar el correo de la quincena ${fmtDate(d.desde)} al ${fmtDate(d.hasta)}: ${esc(d.error)}</span>`;
+    case 'Registros vinculados':
+      return `Indicó que <b>${esc(d.persona)}</b> es la misma persona que ${esc(d.con)}`;
+    case 'Registros desvinculados':
+      return `Desvinculó ${esc(d.registro)}: vuelve a contar como otra persona`;
+    case 'Sucursal principal cambiada':
+      return `Cambió de sucursal a <b>${esc(d.persona)}</b> (antes: ${esc(d.antes)})`;
     case 'Descarga de Excel':
     case 'Descarga de PDF':
+    case 'Descarga de PDF por persona':
     case 'Impresión':
+    case 'Impresión del reporte por persona':
+    case 'Vista del reporte por persona':
     case 'Vista del reporte imprimible': {
-      const que = { 'Descarga de Excel': 'Descargó en <b>Excel</b>', 'Descarga de PDF': 'Descargó en <b>PDF</b>', Impresión: '<b>Imprimió</b>' }[r.accion] || 'Abrió para imprimir';
+      const que = {
+        'Descarga de Excel': 'Descargó en <b>Excel</b>',
+        'Descarga de PDF': 'Descargó en <b>PDF</b>',
+        'Descarga de PDF por persona': `Descargó en <b>PDF</b> el reporte por persona (${d.personas})`,
+        Impresión: '<b>Imprimió</b>',
+        'Impresión del reporte por persona': `<b>Imprimió</b> el reporte por persona (${d.personas})`,
+        'Vista del reporte por persona': `Abrió el reporte por persona (${d.personas})`,
+      }[r.accion] || 'Abrió para imprimir';
       const pantalla = d.pantalla ? ` (pantalla ${esc(NAV.find(([v]) => v === d.pantalla)?.[1] || d.pantalla)})` : '';
       return `${que} el reporte del ${fmtDate(d.desde)} al ${fmtDate(d.hasta)} · ${esc(d.sucursal)}${pantalla}`;
     }
@@ -1297,7 +1767,7 @@ const rolNombre = (rol) => state.roles?.[rol]?.nombre || rol;
 
 // Tipos de registro para filtrar el historial.
 const AUDIT_TIPOS = {
-  reportes: ['Descarga de Excel', 'Descarga de PDF', 'Impresión', 'Vista del reporte imprimible'],
+  reportes: ['Descarga de Excel', 'Descarga de PDF', 'Descarga de PDF por persona', 'Impresión', 'Impresión del reporte por persona', 'Vista del reporte por persona', 'Vista del reporte imprimible', 'Reporte enviado por correo', 'Correo de prueba', 'Error al enviar correo'],
   accesos: ['Inicio de sesión', 'Cierre de sesión', 'Intento de acceso fallido', 'Contraseña cambiada', 'Contraseña restablecida', 'Usuario creado', 'Usuario actualizado'],
 };
 const auditTipo = (accion) => Object.keys(AUDIT_TIPOS).find((k) => AUDIT_TIPOS[k].includes(accion)) || 'cambios';
@@ -1334,23 +1804,29 @@ async function viewBitacora() {
 async function viewUsuarios() {
   const users = await api('/api/usuarios');
   const rolOptions = (sel) => Object.entries(state.roles).map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(r.nombre)}</option>`).join('');
+  const roles = Object.entries(state.roles);
+  const matriz = `<details class="card mb-6" open><summary class="cursor-pointer px-5 py-4 text-base font-semibold text-slate-900">Qué puede hacer cada tipo de acceso</summary>
+    <div class="overflow-auto border-t border-slate-100"><table class="tbl"><thead><tr><th></th>${roles.map(([, r]) => `<th class="text-center">${esc(r.nombre)}</th>`).join('')}</tr></thead>
+    <tbody>${Object.entries(state.permisos || {}).map(([p, desc]) => `<tr><td class="min-w-56 text-slate-700">${esc(desc)}</td>
+      ${roles.map(([, r]) => `<td class="text-center">${r.puede.includes(p) ? '<span class="font-bold text-emerald-600" aria-label="Sí">✓</span>' : '<span class="text-slate-300" aria-label="No">—</span>'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
   $('#view').innerHTML = `
     ${pageHeader('Usuarios', 'Quién puede entrar al sistema y qué puede hacer. Cada acción queda en el Historial con el nombre de la persona.')}
+    ${matriz}
     ${section('Dar acceso a una persona', `La persona entra con una <b>contraseña temporal</b> y el sistema le pide cambiarla la primera vez. Tipos de acceso: ${Object.values(state.roles).map((r) => `<b>${esc(r.nombre)}</b> (${esc(r.desc.toLowerCase())})`).join('; ')}.`,
       `<form id="uNew" class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
         <label class="field">Nombre completo<input class="input" name="nombre" placeholder="Ej. Serene Delgado Lopez" required></label>
         <label class="field">Usuario para entrar<input class="input" name="login" placeholder="Ej. Serene_del" autocomplete="off" autocapitalize="none" required></label>
         <label class="field">Tipo de acceso<select class="input" name="rol">${rolOptions('rh')}</select></label>
-        <label class="field">Contraseña temporal<input class="input" name="password" type="text" autocomplete="off" minlength="6" required></label>
+        <label class="field">Contraseña temporal (8 o más, letras y números)<input class="input" name="password" type="text" autocomplete="off" minlength="8" maxlength="100" required></label>
         <button class="btn btn-primary">Dar acceso</button></form>`)}
-    <div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>Usuario</th><th>Tipo de acceso</th><th>Activo</th><th>Última entrada</th><th></th></tr></thead><tbody>
+    <div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl tbl-stack"><thead><tr><th>Nombre</th><th>Usuario</th><th>Tipo de acceso</th><th>Activo</th><th>Última entrada</th><th></th></tr></thead><tbody>
     ${users.map((u) => `<tr data-user="${u.id}">
       <td class="min-w-56"><input class="input px-2 py-1 font-medium" name="nombre" value="${esc(u.nombre)}">
         ${u.cambiar_clave ? '<div class="mt-1 text-xs text-amber-700">Tiene contraseña temporal (aún no la cambia)</div>' : ''}</td>
-      <td class="font-mono text-xs whitespace-nowrap">${esc(u.login)}${u.id === state.me.id ? ' <span class="font-sans text-brand-700">(usted)</span>' : ''}</td>
-      <td><select class="input px-2 py-1" name="rol">${rolOptions(u.rol)}</select></td>
-      <td class="text-center"><input type="checkbox" class="checkbox" name="activo" ${u.activo ? 'checked' : ''} aria-label="Activo"></td>
-      <td class="whitespace-nowrap tabular-nums text-slate-500">${u.ultimo_acceso ? `${fmtDate(u.ultimo_acceso.slice(0, 10))} ${u.ultimo_acceso.slice(11, 16)}` : 'Nunca'}</td>
+      <td data-label="Usuario" class="font-mono text-xs whitespace-nowrap">${esc(u.login)}${u.id === state.me.id ? ' <span class="font-sans text-brand-700">(usted)</span>' : ''}</td>
+      <td data-label="Acceso"><select class="input px-2 py-1 max-sm:w-auto" name="rol">${rolOptions(u.rol)}</select></td>
+      <td data-label="Activo" class="text-center"><input type="checkbox" class="checkbox" name="activo" ${u.activo ? 'checked' : ''} aria-label="Activo"></td>
+      <td data-label="Última entrada" class="whitespace-nowrap tabular-nums text-slate-500">${u.ultimo_acceso ? `${fmtDate(u.ultimo_acceso.slice(0, 10))} ${u.ultimo_acceso.slice(11, 16)}` : 'Nunca'}</td>
       <td class="whitespace-nowrap"><button class="btn btn-primary btn-sm" data-u-save>Guardar</button>
         ${u.id === state.me.id
           ? '<button class="btn btn-secondary btn-sm" data-cuenta-clave>Cambiar mi contraseña</button>'
@@ -1378,7 +1854,7 @@ async function viewUsuarios() {
     }));
     $('[data-cuenta-clave]', tr)?.addEventListener('click', () => showAuth('cambiar'));
     $('[data-u-pass]', tr)?.addEventListener('click', (ev) => {
-      const password = prompt('Escriba una contraseña temporal (mínimo 6 caracteres). La persona deberá cambiarla al entrar:');
+      const password = prompt('Escriba una contraseña temporal: al menos 8 caracteres, con letras y números. La persona deberá cambiarla al entrar:');
       if (!password) return;
       busy(ev.currentTarget, async () => {
         await api(`/api/usuarios/${id}/clave`, { method: 'POST', body: { password } });
@@ -1389,7 +1865,7 @@ async function viewUsuarios() {
   });
 }
 
-const VIEWS = { panel: viewPanel, empleados: viewEmpleados, detalle: viewDetalle, datos: viewDatos, config: viewConfig, bitacora: viewBitacora, usuarios: viewUsuarios };
+const VIEWS = { panel: viewPanel, empleados: viewEmpleados, detalle: viewDetalle, cierres: viewCierres, datos: viewDatos, config: viewConfig, bitacora: viewBitacora, usuarios: viewUsuarios };
 
 function setupSearch() {
   const input = $('#gsearch');
@@ -1490,54 +1966,138 @@ async function go(view) {
 
 // ---------------------------------------------------------------- inicio de sesión
 // Pantallas: 'primero' (crear el administrador), 'entrar' y 'cambiar' (contraseña).
+// Los errores se muestran dentro del formulario, junto al campo que hay que corregir.
+const MIN_CLAVE = 8;
+// Mismas reglas que el servidor, para avisar mientras se escribe.
+const reglasClave = (p, p2) => [
+  [p.length >= MIN_CLAVE, `Al menos ${MIN_CLAVE} caracteres`],
+  [/\p{L}/u.test(p) && /\d/.test(p), 'Letras y números'],
+  [p.length > 0 && p === p2, 'Las dos coinciden'],
+];
+
 function showAuth(mode, aviso = '') {
   closeDialogs();
   const f = $('#authForm');
-  const field = (name, label, type = 'text', extra = '') =>
-    `<label class="field">${label}<input class="input" name="${name}" type="${type}" required ${extra}></label>`;
+  f.noValidate = true; // los avisos los da el sistema en español, no el navegador
+  const field = (name, label, type = 'text', extra = '') => `<label class="field">${label}
+    ${type === 'password'
+      ? `<span class="relative block"><input class="input pr-20" name="${name}" type="password" ${extra}>
+          <button type="button" class="absolute inset-y-0 right-0 px-3 text-xs font-medium text-brand-700 hover:underline" data-ver="${name}" aria-label="Mostrar contraseña">Mostrar</button></span>`
+      : `<input class="input" name="${name}" type="${type}" ${extra}>`}</label>`;
+  const reglas = `<ul id="authReglas" class="space-y-0.5 text-xs text-slate-500"></ul>`;
   const forzado = mode === 'cambiar' && state.me?.cambiar_clave;
   const forms = {
     primero: `<div><h1 class="text-lg font-bold text-slate-900">Crear el primer usuario</h1>
         <p class="mt-1 text-sm text-slate-500">Todavía no hay usuarios. Esta persona será el <b>administrador</b>: podrá dar acceso a los demás.</p></div>
-      ${field('nombre', 'Nombre completo', 'text', 'autocomplete="name"')}
-      ${field('login', 'Usuario para entrar (ej. juan.perez)', 'text', 'autocomplete="username" autocapitalize="none"')}
-      ${field('password', 'Contraseña (mínimo 6 caracteres)', 'password', 'autocomplete="new-password" minlength="6"')}
-      ${field('password2', 'Repita la contraseña', 'password', 'autocomplete="new-password"')}
+      ${field('nombre', 'Nombre completo', 'text', 'autocomplete="name" maxlength="80"')}
+      ${field('login', 'Usuario para entrar (ej. juan.perez)', 'text', 'autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="30"')}
+      ${field('password', 'Contraseña', 'password', 'autocomplete="new-password" maxlength="100"')}
+      ${field('password2', 'Repita la contraseña', 'password', 'autocomplete="new-password" maxlength="100"')}
+      ${reglas}
       <button class="btn btn-primary w-full">Crear y entrar</button>`,
     entrar: `<div><h1 class="text-lg font-bold text-slate-900">Iniciar sesión</h1>
         <p class="mt-1 text-sm text-slate-500">Todo lo que haga, descargue o imprima queda registrado a su nombre.</p></div>
-      ${field('login', 'Usuario', 'text', 'autocomplete="username" autocapitalize="none" autofocus')}
-      ${field('password', 'Contraseña', 'password', 'autocomplete="current-password"')}
+      ${field('login', 'Usuario', 'text', 'autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="30"')}
+      ${field('password', 'Contraseña', 'password', 'autocomplete="current-password" maxlength="100"')}
       <button class="btn btn-primary w-full">Entrar</button>
       <p class="text-center text-xs text-slate-500">¿Olvidó su contraseña? Pida al administrador una contraseña temporal.</p>`,
     cambiar: `<div><h1 class="text-lg font-bold text-slate-900">${forzado ? 'Cambie su contraseña temporal' : 'Cambiar contraseña'}</h1>
         <p class="mt-1 text-sm text-slate-500">${esc(state.me?.nombre || '')}${forzado ? ': antes de continuar, elija una contraseña que solo usted conozca.' : ''}</p></div>
-      ${field('actual', forzado ? 'Contraseña temporal' : 'Contraseña actual', 'password', 'autocomplete="current-password"')}
-      ${field('nueva', 'Nueva contraseña (mínimo 6 caracteres)', 'password', 'autocomplete="new-password" minlength="6"')}
-      ${field('nueva2', 'Repita la nueva contraseña', 'password', 'autocomplete="new-password"')}
+      ${field('actual', forzado ? 'Contraseña temporal' : 'Contraseña actual', 'password', 'autocomplete="current-password" maxlength="100"')}
+      ${field('nueva', 'Nueva contraseña', 'password', 'autocomplete="new-password" maxlength="100"')}
+      ${field('nueva2', 'Repita la nueva contraseña', 'password', 'autocomplete="new-password" maxlength="100"')}
+      ${reglas}
       <button class="btn btn-primary w-full">Guardar contraseña</button>
       ${forzado ? '<button type="button" class="btn btn-ghost w-full" data-salir>Cerrar sesión</button>' : '<button type="button" class="btn btn-ghost w-full" data-cancel>Cancelar</button>'}`,
   };
-  f.innerHTML = (aviso ? notice('warn', esc(aviso)) : '') + forms[mode];
+  f.innerHTML = (aviso ? notice('warn', esc(aviso)) : '') + forms[mode]
+    + '<p id="authMayus" class="hidden text-xs font-medium text-amber-700">⚠ Bloq Mayús está activado.</p>'
+    + '<div id="authError" role="alert" aria-live="assertive"></div>';
+  // Avisos y errores justo arriba del botón principal, cerca de los campos.
+  $('button.btn-primary', f).before($('#authMayus'), $('#authError'));
   $('#auth').classList.remove('hidden');
   $('[data-salir]', f)?.addEventListener('click', logout);
   $('[data-cancel]', f)?.addEventListener('click', () => $('#auth').classList.add('hidden'));
+
+  // Mostrar u ocultar lo escrito en una contraseña.
+  $$('[data-ver]', f).forEach((b) => b.addEventListener('click', () => {
+    const i = $(`[name=${b.dataset.ver}]`, f);
+    const ver = i.type === 'password';
+    i.type = ver ? 'text' : 'password';
+    b.textContent = ver ? 'Ocultar' : 'Mostrar';
+    b.setAttribute('aria-label', ver ? 'Ocultar contraseña' : 'Mostrar contraseña');
+  }));
+  // Aviso de Bloq Mayús mientras se escribe una contraseña.
+  $$('input[name]', f).forEach((i) => i.addEventListener('keyup', (ev) => {
+    if (ev.getModifierState) $('#authMayus').classList.toggle('hidden', !ev.getModifierState('CapsLock'));
+  }));
+  // Reglas de la contraseña nueva, marcadas mientras se escribe.
+  const [n1, n2] = mode === 'primero' ? ['password', 'password2'] : ['nueva', 'nueva2'];
+  const pintarReglas = () => {
+    const ul = $('#authReglas');
+    if (!ul) return;
+    ul.innerHTML = reglasClave($(`[name=${n1}]`, f).value, $(`[name=${n2}]`, f).value)
+      .map(([okR, t]) => `<li class="${okR ? 'text-emerald-700' : ''}">${okR ? '✔' : '○'} ${t}</li>`).join('');
+  };
+  if (mode !== 'entrar') {
+    for (const n of [n1, n2]) $(`[name=${n}]`, f).addEventListener('input', pintarReglas);
+    pintarReglas();
+  }
+
+  // Muestra el error junto al formulario y marca el campo a corregir.
+  const fallo = (msg, campo) => {
+    $$('input', f).forEach((i) => i.removeAttribute('aria-invalid'));
+    $('#authError').innerHTML = `<div class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">${esc(msg)}</div>`;
+    const i = campo && $(`[name=${campo}]`, f);
+    if (i) {
+      i.setAttribute('aria-invalid', 'true');
+      i.focus();
+      i.select?.();
+    }
+  };
+  // A qué campo se refiere cada mensaje del servidor.
+  const campoDe = (msg) => {
+    if (mode === 'entrar') return /usuario\.$/i.test(msg) && !/contraseña/.test(msg) ? 'login' : 'password';
+    if (/actual|temporal no/.test(msg)) return 'actual';
+    if (/nombre/i.test(msg) && !/contraseña/.test(msg)) return 'nombre';
+    if (/usuario/i.test(msg) && !/contraseña/.test(msg)) return 'login';
+    if (/coinciden/.test(msg)) return n2;
+    return n1;
+  };
   f.onsubmit = (ev) => {
     ev.preventDefault();
     const v = Object.fromEntries(new FormData(f));
-    busy($('button', f), async () => {
+    $('#authError').innerHTML = '';
+    // Revisiones rápidas antes de ir al servidor.
+    const vacio = $$('input[name]', f).find((i) => !i.value);
+    const VACIO = { nombre: 'Escriba su nombre completo.', login: 'Escriba su usuario.', password: 'Escriba la contraseña.', password2: 'Repita la contraseña en el segundo campo.',
+      actual: forzado ? 'Escriba la contraseña temporal que le dieron.' : 'Escriba su contraseña actual.', nueva: 'Escriba la contraseña nueva.', nueva2: 'Repita la contraseña nueva en el segundo campo.' };
+    if (vacio) return fallo(VACIO[vacio.name] || 'Llene todos los campos.', vacio.name);
+    if (mode !== 'entrar') {
+      const pendiente = reglasClave(v[n1], v[n2]).find(([okR]) => !okR);
+      if (pendiente) return fallo(pendiente[1] === 'Las dos coinciden' ? 'Las contraseñas no coinciden.' : `La contraseña debe tener: ${pendiente[1].toLowerCase()}.`, pendiente[1] === 'Las dos coinciden' ? n2 : n1);
+    }
+    const btn = $('button:not([type=button])', f);
+    const html = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner"></span> ${esc(btn.textContent.trim())}`;
+    (async () => {
       let r;
-      if (mode === 'primero') {
-        if (v.password !== v.password2) throw new Error('Las contraseñas no coinciden.');
-        r = await api('/api/auth/primer-usuario', { method: 'POST', body: v });
-      } else if (mode === 'entrar') {
-        r = await api('/api/auth/entrar', { method: 'POST', body: v });
-      } else {
-        if (v.nueva !== v.nueva2) throw new Error('Las contraseñas nuevas no coinciden.');
+      if (mode === 'primero') r = await api('/api/auth/primer-usuario', { method: 'POST', body: v });
+      else if (mode === 'entrar') r = await api('/api/auth/entrar', { method: 'POST', body: v });
+      else {
         r = await api('/api/cuenta/clave', { method: 'POST', body: v });
         toast('Contraseña cambiada');
       }
       await start(r.usuario);
+    })().catch((e) => {
+      const campo = campoDe(e.message);
+      // Por seguridad, la contraseña equivocada se borra para volver a escribirla.
+      if (mode === 'entrar' && campo === 'password') $('[name=password]', f).value = '';
+      fallo(e.message, campo);
+    }).finally(() => {
+      btn.disabled = false;
+      btn.innerHTML = html;
     });
   };
   $('input', f)?.focus();
@@ -1556,8 +2116,9 @@ function renderCuenta() {
   $('#cuentaMobile').innerHTML = html;
   $$('[data-cuenta-clave]').forEach((b) => b.addEventListener('click', () => showAuth('cambiar')));
   $$('[data-cuenta-salir]').forEach((b) => b.addEventListener('click', logout));
-  // "Solo consulta" no ve los botones para justificar, completar nombres o dar de baja.
-  document.body.classList.toggle('solo-consulta', u.rol === 'consulta');
+  // Sin permiso no se muestran los botones para justificar, completar nombres o dar de baja.
+  document.body.classList.toggle('no-justificar', !puede('justificar'));
+  document.body.classList.toggle('no-empleados', !puede('empleados'));
 }
 
 async function logout() {
@@ -1598,6 +2159,7 @@ async function boot() {
   try {
     const s = await api('/api/auth/estado');
     state.roles = s.roles;
+    state.permisos = s.permisos;
     if (!s.configurado) return showAuth('primero');
     if (!s.usuario) return showAuth('entrar');
     await start(s.usuario);
