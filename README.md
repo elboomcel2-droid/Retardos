@@ -13,7 +13,27 @@ Requisito: [Node.js](https://nodejs.org) 22.5 o superior.
 - **Manual:** `npm install` y luego `npm start`; abrir <http://localhost:3000>.
 
 La aplicación escucha solo en el propio equipo. Para que otros equipos de la red la usen:
-`set HOST=0.0.0.0` antes de iniciar (no tiene inicio de sesión: hágalo solo en una red de confianza).
+`set HOST=0.0.0.0` antes de iniciar (la conexión no va cifrada: hágalo solo en una red de confianza).
+
+## Usuarios y control de accesos
+
+La primera vez que se abre, el sistema pide crear el **primer usuario**, que será administrador.
+Después, en **Usuarios**, el administrador da acceso a cada persona con un usuario
+(ej. `luz.samano`) y una contraseña temporal que la persona debe cambiar al entrar.
+
+| Tipo de acceso | Qué puede hacer |
+|---|---|
+| Administrador | Todo, incluidos usuarios y la conexión con los checadores |
+| Recursos Humanos | Justificaciones, nombres completos, bajas, festivos, horarios, reglas, cargar checadas e Historial |
+| Solo consulta | Ver, descargar e imprimir reportes y actualizar checadas |
+
+En el **Historial** queda quién hizo qué y cuándo, y se puede filtrar por persona: entradas al
+sistema (y los intentos fallidos), descargas de Excel y PDF, impresiones (botón Imprimir o
+Ctrl+P), justificaciones y cambios. Los reportes salen con el nombre de quien los generó.
+La sesión se cierra sola tras 8 horas sin uso; 5 intentos fallidos bloquean el usuario 5 minutos.
+Si alguien olvida su contraseña, el administrador le pone una temporal nueva.
+Si el que la olvidó es el administrador, en el equipo donde está instalado el sistema abra
+`restablecer-clave.bat`, escriba su usuario y entre con la contraseña temporal que aparece.
 
 ## Primer uso
 

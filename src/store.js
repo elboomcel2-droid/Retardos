@@ -121,6 +121,26 @@ function open(file) {
       accion TEXT NOT NULL,
       detalle TEXT NOT NULL
     );
+
+    -- Personas que pueden entrar al sistema (no confundir con los empleados del checador).
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      login TEXT NOT NULL UNIQUE,
+      nombre TEXT NOT NULL,
+      rol TEXT NOT NULL,
+      password TEXT NOT NULL,
+      activo INTEGER NOT NULL DEFAULT 1,
+      cambiar_clave INTEGER NOT NULL DEFAULT 1,
+      creado TEXT NOT NULL,
+      ultimo_acceso TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+      token TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      creado TEXT NOT NULL,
+      expira INTEGER NOT NULL
+    );
   `);
 
   // Nombre completo capturado en el sistema (el checador a veces solo tiene iniciales).
@@ -372,6 +392,75 @@ class Store {
     this.db.prepare('DELETE FROM justifications WHERE id = ?').run(id);
   }
 
+  // ---------- usuarios y sesiones ----------
+  users() {
+    return this.db
+      .prepare('SELECT id, login, nombre, rol, activo, cambiar_clave, creado, ultimo_acceso FROM users ORDER BY nombre')
+      .all()
+      .map(parseUser);
+  }
+
+  userCount() {
+    return this.db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+  }
+
+  activeAdmins() {
+    return this.db.prepare("SELECT COUNT(*) AS n FROM users WHERE rol = 'admin' AND activo = 1").get().n;
+  }
+
+  user(id) {
+    const r = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    return r ? parseUser(r) : null;
+  }
+
+  userByLogin(login) {
+    const r = this.db.prepare('SELECT * FROM users WHERE login = ?').get(login);
+    return r ? parseUser(r) : null;
+  }
+
+  createUser({ login, nombre, rol, password, cambiar_clave = true }) {
+    return Number(
+      this.db
+        .prepare('INSERT INTO users (login, nombre, rol, password, cambiar_clave, creado) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(login, nombre, rol, password, cambiar_clave ? 1 : 0, now()).lastInsertRowid
+    );
+  }
+
+  updateUser(id, { nombre, rol, activo }) {
+    this.db.prepare('UPDATE users SET nombre = ?, rol = ?, activo = ? WHERE id = ?').run(nombre, rol, activo ? 1 : 0, id);
+  }
+
+  setPassword(id, password, cambiar_clave) {
+    this.db.prepare('UPDATE users SET password = ?, cambiar_clave = ? WHERE id = ?').run(password, cambiar_clave ? 1 : 0, id);
+  }
+
+  createSession(token, userId, hours) {
+    this.db.prepare('DELETE FROM sessions WHERE expira < ?').run(Date.now());
+    this.db
+      .prepare('INSERT INTO sessions (token, user_id, creado, expira) VALUES (?, ?, ?, ?)')
+      .run(token, userId, now(), Date.now() + hours * 3600000);
+    this.db.prepare('UPDATE users SET ultimo_acceso = ? WHERE id = ?').run(now(), userId);
+  }
+
+  // Usuario de una sesión vigente; cada uso la extiende (se cierra por inactividad).
+  sessionUser(token, hours) {
+    if (!token) return null;
+    const s = this.db.prepare('SELECT * FROM sessions WHERE token = ?').get(token);
+    if (!s || s.expira < Date.now()) return null;
+    const u = this.user(s.user_id);
+    if (!u || !u.activo) return null;
+    this.db.prepare('UPDATE sessions SET expira = ? WHERE token = ?').run(Date.now() + hours * 3600000, token);
+    return u;
+  }
+
+  deleteSession(token) {
+    this.db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  }
+
+  deleteSessionsOf(userId, exceptToken = '') {
+    this.db.prepare('DELETE FROM sessions WHERE user_id = ? AND token <> ?').run(userId, exceptToken);
+  }
+
   // ---------- bitácora ----------
   log(autor, accion, detalle) {
     this.db
@@ -379,13 +468,17 @@ class Store {
       .run(now(), autor || 'sistema', accion, typeof detalle === 'string' ? detalle : JSON.stringify(detalle));
   }
 
-  audit(limit = 300) {
+  audit(limit = 2000) {
     return this.db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT ?').all(limit);
   }
 }
 
 function parseBranch(r) {
   return { ...r, enabled: !!r.enabled, schedule: JSON.parse(r.schedule) };
+}
+
+function parseUser(r) {
+  return { ...r, activo: !!r.activo, cambiar_clave: !!r.cambiar_clave };
 }
 
 function parseEmployee(r) {

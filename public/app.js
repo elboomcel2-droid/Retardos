@@ -35,6 +35,7 @@ const ICONS = {
   datos: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>',
   config: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-2.82 1.17V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-2.82-1.17l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 3.2 14H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 2.82 1.17l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
   bitacora: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/>',
+  usuarios: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   alert: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0zM12 9v4M12 17h.01"/>',
   x: '<path d="M18 6 6 18M6 6l12 12"/>',
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>',
@@ -43,21 +44,25 @@ const ICONS = {
 const icon = (name, cls = 'size-4') =>
   `<svg class="${cls} shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
 
+// Tercer dato: roles que ven la sección (sin él, todos).
 const NAV = [
   ['panel', 'Panel'],
   ['empleados', 'Empleados'],
   ['detalle', 'Detalle diario'],
-  ['datos', 'Cargar checadas'],
-  ['config', 'Configuración'],
-  ['bitacora', 'Historial de cambios'],
+  ['datos', 'Cargar checadas', ['admin', 'rh']],
+  ['config', 'Configuración', ['admin', 'rh']],
+  ['bitacora', 'Historial', ['admin', 'rh']],
+  ['usuarios', 'Usuarios', ['admin']],
 ];
+const navFor = () => NAV.filter(([, , roles]) => !roles || roles.includes(state.me?.rol));
 
+// Nombre de quien inició sesión.
 function usuario() {
-  return ($('#usuario').value || $('#usuarioMobile').value).trim();
+  return state.me?.nombre || '';
 }
 
 async function api(url, opts = {}) {
-  const headers = { 'x-usuario': encodeURIComponent(usuario()), ...(opts.headers || {}) };
+  const headers = { ...(opts.headers || {}) };
   let body = opts.body;
   if (body && !(body instanceof ArrayBuffer) && typeof body !== 'string') {
     headers['Content-Type'] = 'application/json';
@@ -65,8 +70,25 @@ async function api(url, opts = {}) {
   }
   const res = await fetch(url, { ...opts, headers, body });
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401 && !url.startsWith('/api/auth/')) sesionTerminada();
   if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
   return data;
+}
+
+// Descarga un archivo del servidor (Excel o PDF) mostrando el aviso si algo falla.
+async function download(url, fallbackName) {
+  const res = await fetch(url);
+  if (!res.ok) {
+    if (res.status === 401) sesionTerminada();
+    throw new Error((await res.json().catch(() => ({}))).error || 'No se pudo descargar el archivo.');
+  }
+  const href = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement('a'), {
+    href,
+    download: (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || fallbackName,
+  });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(href), 5000);
 }
 
 function toast(msg, type = 'ok') {
@@ -125,6 +147,7 @@ function notice(tone, html) {
 
 // ---------------------------------------------------------------- estado
 const state = {
+  me: null,
   view: 'panel',
   branches: [],
   report: null,
@@ -195,14 +218,15 @@ async function refresh() {
 function renderNav() {
   const badge = (v) => (v === 'empleados' && state.pendientes?.length
     ? `<span class="ml-auto rounded-full bg-amber-400 px-2 py-0.5 text-[11px] font-bold text-brand-900" title="Nombres por completar">${state.pendientes.length}</span>` : '');
-  $('#nav').innerHTML = NAV.map(([v, l]) =>
+  $('#nav').innerHTML = navFor().map(([v, l]) =>
     `<button class="nav-item ${state.view === v ? 'active' : ''}" data-view="${v}">${icon(v, 'size-[18px]')}${l}${badge(v)}</button>`).join('');
-  $('#navMobile').innerHTML = NAV.map(([v, l]) =>
+  $('#navMobile').innerHTML = navFor().map(([v, l]) =>
     `<button class="rounded-md px-3 py-1.5 text-sm whitespace-nowrap ${state.view === v ? 'bg-white/15 text-white' : 'text-slate-300'}" data-view="${v}">${l}</button>`).join('');
   $$('[data-view]').forEach((b) => b.addEventListener('click', () => go(b.dataset.view)));
 }
 
 async function render() {
+  if (!navFor().some(([v]) => v === state.view)) state.view = 'panel';
   renderNav();
   $('#filters').classList.toggle('hidden', !['panel', 'empleados', 'detalle', 'datos'].includes(state.view));
   await VIEWS[state.view]();
@@ -723,7 +747,7 @@ async function showJustify(branchId, code, fecha) {
         <input type="date" id="jHasta" class="input sm:w-48" min="${fecha}">
         <span class="font-normal">Útil para vacaciones o incapacidades: se guarda la misma justificación en cada día.</span></label>`}
     </div>
-    <p class="mt-4 text-xs text-slate-500">Quedará registrado a nombre de <b class="text-slate-700">${esc(usuario() || '(escriba su nombre en el campo Usuario)')}</b> en el historial de cambios.</p>
+    <p class="mt-4 text-xs text-slate-500">Quedará registrado a nombre de <b class="text-slate-700">${esc(usuario())}</b> en el historial.</p>
     <div class="mt-6 flex flex-wrap justify-end gap-2">
       ${j ? '<button class="btn btn-danger sm:mr-auto" id="jDel">Borrar nota</button>' : ''}
       <button class="btn btn-secondary" data-close>Cancelar</button>
@@ -990,7 +1014,7 @@ async function viewConfig() {
         <td><input class="input min-w-32 px-2 py-1" name="notas" value="${esc(e.notas)}"></td><td><button class="btn btn-primary btn-sm" data-emp-save>Guardar</button></td></tr>`).join('')
         || '<tr><td colspan="6" class="py-8 text-center text-slate-400">Todavía no hay empleados. Aparecerán al cargar las checadas.</td></tr>'}</tbody></table></div>`)}
 
-    <details class="card mb-6 group">
+    ${state.me.rol !== 'admin' ? '' : `<details class="card mb-6 group">
       <summary class="flex cursor-pointer list-none items-center justify-between gap-3 p-5">
         <div><h2 class="text-base font-semibold text-slate-900">Opciones avanzadas</h2>
           <p class="text-sm text-slate-500">Solo para el área de sistemas: conexión con los checadores. Normalmente no hay que tocar nada aquí.</p></div>
@@ -1033,10 +1057,11 @@ WHERE personnel_employee.emp_code = iclock_transaction.emp_code
   BETWEEN "${$('#from').value} 00:00:00" AND "${$('#to').value} 23:59:59"
 ORDER BY iclock_transaction.punch_time ASC;</pre></details>
       </div>
-    </details>`;
+    </details>`}`;
 
   const formData = (root) => Object.fromEntries($$('input, select', root).filter((i) => i.name).map((i) => [i.name, i.value]));
-  $('#saveConn').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+  // Las opciones avanzadas solo existen para el administrador.
+  $('#saveConn')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
     await api('/api/settings', { method: 'PUT', body: formData($('#connForm')) });
     toast('Conexión guardada');
   }));
@@ -1056,14 +1081,14 @@ ORDER BY iclock_transaction.punch_time ASC;</pre></details>
       <td><div class="flex flex-wrap gap-1.5">${d.ventanas.map((w) => `<span class="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs"><b>${w.desde}–${w.hasta}</b> · cada ${w.cada === 60 ? 'hora' : `${w.cada} min`} · ${esc(w.motivo)}</span>`).join('')}</div></td></tr>`).join('')}
       </tbody></table></div><p class="mt-2 text-xs">Fuera de estos horarios no se consulta. Siempre puede usar <b>Actualizar desde checadores</b> para traer las checadas en cualquier momento.</p>`;
   }).catch(() => {});
-  $('#saveAdv').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+  $('#saveAdv')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
     await api('/api/settings', { method: 'PUT', body: formData($('#advForm')) });
     toast('Ajustes guardados');
   }));
   const saveBranch = (id) => {
     const card = $(`[data-branch="${id}"]`);
     return api(`/api/branches/${id}`, { method: 'PUT', body: {
-      db_name: $(`[data-db-row="${id}"] [name=db_name]`).value.trim(),
+      db_name: $(`[data-db-row="${id}"] [name=db_name]`)?.value.trim(),
       tolerancia_min: $('[name=tolerancia_min]', card).value,
       enabled: $('[name=enabled]', card).checked,
       schedule: readSched(card, 'b' + id),
@@ -1233,25 +1258,138 @@ function describeAudit(r, names, branches) {
       return `Agregó el día festivo ${fmtDate(d.fecha)} (${esc(d.descripcion)})`;
     case 'Festivo eliminado':
       return `Quitó el día festivo ${fmtDate(d.fecha)}`;
+    case 'Descarga de Excel':
+    case 'Descarga de PDF':
+    case 'Impresión':
+    case 'Vista del reporte imprimible': {
+      const que = { 'Descarga de Excel': 'Descargó en <b>Excel</b>', 'Descarga de PDF': 'Descargó en <b>PDF</b>', Impresión: '<b>Imprimió</b>' }[r.accion] || 'Abrió para imprimir';
+      const pantalla = d.pantalla ? ` (pantalla ${esc(NAV.find(([v]) => v === d.pantalla)?.[1] || d.pantalla)})` : '';
+      return `${que} el reporte del ${fmtDate(d.desde)} al ${fmtDate(d.hasta)} · ${esc(d.sucursal)}${pantalla}`;
+    }
+    case 'Inicio de sesión':
+      return 'Entró al sistema';
+    case 'Cierre de sesión':
+      return 'Cerró sesión';
+    case 'Intento de acceso fallido':
+      return `<span class="text-rose-700">Intento de entrar fallido con el usuario <b>${esc(d.login)}</b>${d.motivo ? ` (${esc(d.motivo)})` : ' (contraseña incorrecta o usuario inexistente)'}</span>`;
+    case 'Contraseña cambiada':
+      return 'Cambió su contraseña';
+    case 'Contraseña restablecida':
+      return `Le puso una contraseña temporal a <b>${esc(d.nombre)}</b> (${esc(d.login)})`;
+    case 'Usuario creado':
+      return d.primero
+        ? `Creó el primer usuario administrador (<b>${esc(d.login)}</b>)`
+        : `Dio acceso a <b>${esc(d.nombre)}</b> con el usuario <b>${esc(d.login)}</b> como ${esc(rolNombre(d.rol))}`;
+    case 'Usuario actualizado': {
+      const c = [];
+      if (d.nombre) c.push(`nombre a <b>${esc(d.nombre)}</b>`);
+      if (d.rol) c.push(`acceso a <b>${esc(rolNombre(d.rol))}</b>`);
+      if (d.activo === false) c.push('<b>lo desactivó</b>');
+      if (d.activo === true) c.push('<b>lo volvió a activar</b>');
+      return `Cambió al usuario <b>${esc(d.login)}</b>${c.length ? `: ${c.join(', ')}` : ''}`;
+    }
     default:
       return esc(r.accion);
   }
 }
 
+const rolNombre = (rol) => state.roles?.[rol]?.nombre || rol;
+
+// Tipos de registro para filtrar el historial.
+const AUDIT_TIPOS = {
+  reportes: ['Descarga de Excel', 'Descarga de PDF', 'Impresión', 'Vista del reporte imprimible'],
+  accesos: ['Inicio de sesión', 'Cierre de sesión', 'Intento de acceso fallido', 'Contraseña cambiada', 'Contraseña restablecida', 'Usuario creado', 'Usuario actualizado'],
+};
+const auditTipo = (accion) => Object.keys(AUDIT_TIPOS).find((k) => AUDIT_TIPOS[k].includes(accion)) || 'cambios';
+
 async function viewBitacora() {
   const [rows, employees] = await Promise.all([api('/api/audit'), api('/api/employees')]);
   const names = Object.fromEntries(employees.map((e) => [`${e.branch_id}|${e.emp_code}`, e.alias || `${e.first_name} ${e.last_name}`.trim()]));
   const branches = Object.fromEntries(state.branches.map((b) => [b.id, `${b.code} ${b.name}`]));
+  const personas = [...new Set(rows.map((r) => r.autor))].sort((a, b) => a.localeCompare(b, 'es'));
   $('#view').innerHTML = `
-    ${pageHeader('Historial de cambios', 'Quién hizo qué y cuándo: actualizaciones de checadas, justificaciones y cambios de configuración.')}
-    <div class="card overflow-hidden"><div class="max-h-[75vh] overflow-auto"><table class="tbl"><thead><tr><th>Fecha y hora</th><th>Persona</th><th>Qué hizo</th></tr></thead><tbody>
-    ${rows.map((r) => `<tr><td class="whitespace-nowrap tabular-nums text-slate-500">${fmtDate(r.fecha.slice(0, 10))} ${r.fecha.slice(11, 16)}</td>
+    ${pageHeader('Historial', 'Quién hizo qué y cuándo: entradas al sistema, reportes descargados o impresos, justificaciones y cambios.')}
+    <div class="mb-4 flex flex-wrap items-end gap-3">
+      <label class="field">Persona<select id="auPersona" class="input w-64"><option value="">Todas</option>${personas.map((p) => `<option>${esc(p)}</option>`).join('')}</select></label>
+      <label class="field">Qué<select id="auTipo" class="input w-64">
+        <option value="">Todo</option><option value="reportes">Descargas e impresiones de reportes</option>
+        <option value="accesos">Entradas al sistema y usuarios</option><option value="cambios">Cambios y justificaciones</option></select></label>
+    </div>
+    <div class="card overflow-hidden"><div class="max-h-[75vh] overflow-auto"><table class="tbl"><thead><tr><th>Fecha y hora</th><th>Persona</th><th>Qué hizo</th></tr></thead><tbody id="auBody"></tbody></table></div></div>`;
+  const show = () => {
+    const p = $('#auPersona').value;
+    const t = $('#auTipo').value;
+    const list = rows.filter((r) => (!p || r.autor === p) && (!t || auditTipo(r.accion) === t));
+    $('#auBody').innerHTML = list.map((r) => `<tr><td class="whitespace-nowrap tabular-nums text-slate-500">${fmtDate(r.fecha.slice(0, 10))} ${r.fecha.slice(11, 16)}</td>
       <td class="font-medium whitespace-nowrap">${esc(r.autor)}</td>
       <td class="text-slate-700">${describeAudit(r, names, branches)}</td></tr>`).join('')
-      || '<tr><td colspan="3" class="py-8 text-center text-slate-400">Todavía no hay cambios registrados.</td></tr>'}</tbody></table></div></div>`;
+      || '<tr><td colspan="3" class="py-8 text-center text-slate-400">No hay registros con estos filtros.</td></tr>';
+  };
+  $('#auPersona').addEventListener('change', show);
+  $('#auTipo').addEventListener('change', show);
+  show();
 }
 
-const VIEWS = { panel: viewPanel, empleados: viewEmpleados, detalle: viewDetalle, datos: viewDatos, config: viewConfig, bitacora: viewBitacora };
+// ---------------------------------------------------------------- Usuarios
+async function viewUsuarios() {
+  const users = await api('/api/usuarios');
+  const rolOptions = (sel) => Object.entries(state.roles).map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(r.nombre)}</option>`).join('');
+  $('#view').innerHTML = `
+    ${pageHeader('Usuarios', 'Quién puede entrar al sistema y qué puede hacer. Cada acción queda en el Historial con el nombre de la persona.')}
+    ${section('Dar acceso a una persona', `La persona entra con una <b>contraseña temporal</b> y el sistema le pide cambiarla la primera vez. Tipos de acceso: ${Object.values(state.roles).map((r) => `<b>${esc(r.nombre)}</b> (${esc(r.desc.toLowerCase())})`).join('; ')}.`,
+      `<form id="uNew" class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
+        <label class="field">Nombre completo<input class="input" name="nombre" placeholder="Ej. Serene Delgado Lopez" required></label>
+        <label class="field">Usuario para entrar<input class="input" name="login" placeholder="Ej. Serene_del" autocomplete="off" autocapitalize="none" required></label>
+        <label class="field">Tipo de acceso<select class="input" name="rol">${rolOptions('rh')}</select></label>
+        <label class="field">Contraseña temporal<input class="input" name="password" type="text" autocomplete="off" minlength="6" required></label>
+        <button class="btn btn-primary">Dar acceso</button></form>`)}
+    <div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl"><thead><tr><th>Nombre</th><th>Usuario</th><th>Tipo de acceso</th><th>Activo</th><th>Última entrada</th><th></th></tr></thead><tbody>
+    ${users.map((u) => `<tr data-user="${u.id}">
+      <td class="min-w-56"><input class="input px-2 py-1 font-medium" name="nombre" value="${esc(u.nombre)}">
+        ${u.cambiar_clave ? '<div class="mt-1 text-xs text-amber-700">Tiene contraseña temporal (aún no la cambia)</div>' : ''}</td>
+      <td class="font-mono text-xs whitespace-nowrap">${esc(u.login)}${u.id === state.me.id ? ' <span class="font-sans text-brand-700">(usted)</span>' : ''}</td>
+      <td><select class="input px-2 py-1" name="rol">${rolOptions(u.rol)}</select></td>
+      <td class="text-center"><input type="checkbox" class="checkbox" name="activo" ${u.activo ? 'checked' : ''} aria-label="Activo"></td>
+      <td class="whitespace-nowrap tabular-nums text-slate-500">${u.ultimo_acceso ? `${fmtDate(u.ultimo_acceso.slice(0, 10))} ${u.ultimo_acceso.slice(11, 16)}` : 'Nunca'}</td>
+      <td class="whitespace-nowrap"><button class="btn btn-primary btn-sm" data-u-save>Guardar</button>
+        ${u.id === state.me.id
+          ? '<button class="btn btn-secondary btn-sm" data-cuenta-clave>Cambiar mi contraseña</button>'
+          : '<button class="btn btn-secondary btn-sm" data-u-pass>Contraseña temporal</button>'}</td></tr>`).join('')}
+    </tbody></table></div></div>`;
+  $('#uNew').addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const f = ev.currentTarget;
+    busy($('button', f), async () => {
+      await api('/api/usuarios', { method: 'POST', body: Object.fromEntries(new FormData(f)) });
+      toast(`Acceso creado. Comparta el usuario «${f.login.value.trim().toLowerCase()}» y la contraseña temporal con la persona.`);
+      await viewUsuarios();
+    });
+  });
+  $$('[data-user]').forEach((tr) => {
+    const id = tr.dataset.user;
+    $('[data-u-save]', tr).addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+      await api(`/api/usuarios/${id}`, { method: 'PUT', body: {
+        nombre: $('[name=nombre]', tr).value,
+        rol: $('[name=rol]', tr).value,
+        activo: $('[name=activo]', tr).checked,
+      } });
+      toast('Usuario guardado');
+      await viewUsuarios();
+    }));
+    $('[data-cuenta-clave]', tr)?.addEventListener('click', () => showAuth('cambiar'));
+    $('[data-u-pass]', tr)?.addEventListener('click', (ev) => {
+      const password = prompt('Escriba una contraseña temporal (mínimo 6 caracteres). La persona deberá cambiarla al entrar:');
+      if (!password) return;
+      busy(ev.currentTarget, async () => {
+        await api(`/api/usuarios/${id}/clave`, { method: 'POST', body: { password } });
+        toast('Contraseña temporal guardada. Compártala con la persona.');
+        await viewUsuarios();
+      });
+    });
+  });
+}
+
+const VIEWS = { panel: viewPanel, empleados: viewEmpleados, detalle: viewDetalle, datos: viewDatos, config: viewConfig, bitacora: viewBitacora, usuarios: viewUsuarios };
 
 function setupSearch() {
   const input = $('#gsearch');
@@ -1306,7 +1444,7 @@ function setupSearch() {
 // pantalla muestra el periodo de hoy, la vuelve a cargar.
 let liveVersion = null;
 async function pollLive() {
-  if (document.hidden) return;
+  if (document.hidden || !state.me) return;
   let s;
   try {
     s = await api('/api/live');
@@ -1350,21 +1488,126 @@ async function go(view) {
   await refresh();
 }
 
+// ---------------------------------------------------------------- inicio de sesión
+// Pantallas: 'primero' (crear el administrador), 'entrar' y 'cambiar' (contraseña).
+function showAuth(mode, aviso = '') {
+  closeDialogs();
+  const f = $('#authForm');
+  const field = (name, label, type = 'text', extra = '') =>
+    `<label class="field">${label}<input class="input" name="${name}" type="${type}" required ${extra}></label>`;
+  const forzado = mode === 'cambiar' && state.me?.cambiar_clave;
+  const forms = {
+    primero: `<div><h1 class="text-lg font-bold text-slate-900">Crear el primer usuario</h1>
+        <p class="mt-1 text-sm text-slate-500">Todavía no hay usuarios. Esta persona será el <b>administrador</b>: podrá dar acceso a los demás.</p></div>
+      ${field('nombre', 'Nombre completo', 'text', 'autocomplete="name"')}
+      ${field('login', 'Usuario para entrar (ej. juan.perez)', 'text', 'autocomplete="username" autocapitalize="none"')}
+      ${field('password', 'Contraseña (mínimo 6 caracteres)', 'password', 'autocomplete="new-password" minlength="6"')}
+      ${field('password2', 'Repita la contraseña', 'password', 'autocomplete="new-password"')}
+      <button class="btn btn-primary w-full">Crear y entrar</button>`,
+    entrar: `<div><h1 class="text-lg font-bold text-slate-900">Iniciar sesión</h1>
+        <p class="mt-1 text-sm text-slate-500">Todo lo que haga, descargue o imprima queda registrado a su nombre.</p></div>
+      ${field('login', 'Usuario', 'text', 'autocomplete="username" autocapitalize="none" autofocus')}
+      ${field('password', 'Contraseña', 'password', 'autocomplete="current-password"')}
+      <button class="btn btn-primary w-full">Entrar</button>
+      <p class="text-center text-xs text-slate-500">¿Olvidó su contraseña? Pida al administrador una contraseña temporal.</p>`,
+    cambiar: `<div><h1 class="text-lg font-bold text-slate-900">${forzado ? 'Cambie su contraseña temporal' : 'Cambiar contraseña'}</h1>
+        <p class="mt-1 text-sm text-slate-500">${esc(state.me?.nombre || '')}${forzado ? ': antes de continuar, elija una contraseña que solo usted conozca.' : ''}</p></div>
+      ${field('actual', forzado ? 'Contraseña temporal' : 'Contraseña actual', 'password', 'autocomplete="current-password"')}
+      ${field('nueva', 'Nueva contraseña (mínimo 6 caracteres)', 'password', 'autocomplete="new-password" minlength="6"')}
+      ${field('nueva2', 'Repita la nueva contraseña', 'password', 'autocomplete="new-password"')}
+      <button class="btn btn-primary w-full">Guardar contraseña</button>
+      ${forzado ? '<button type="button" class="btn btn-ghost w-full" data-salir>Cerrar sesión</button>' : '<button type="button" class="btn btn-ghost w-full" data-cancel>Cancelar</button>'}`,
+  };
+  f.innerHTML = (aviso ? notice('warn', esc(aviso)) : '') + forms[mode];
+  $('#auth').classList.remove('hidden');
+  $('[data-salir]', f)?.addEventListener('click', logout);
+  $('[data-cancel]', f)?.addEventListener('click', () => $('#auth').classList.add('hidden'));
+  f.onsubmit = (ev) => {
+    ev.preventDefault();
+    const v = Object.fromEntries(new FormData(f));
+    busy($('button', f), async () => {
+      let r;
+      if (mode === 'primero') {
+        if (v.password !== v.password2) throw new Error('Las contraseñas no coinciden.');
+        r = await api('/api/auth/primer-usuario', { method: 'POST', body: v });
+      } else if (mode === 'entrar') {
+        r = await api('/api/auth/entrar', { method: 'POST', body: v });
+      } else {
+        if (v.nueva !== v.nueva2) throw new Error('Las contraseñas nuevas no coinciden.');
+        r = await api('/api/cuenta/clave', { method: 'POST', body: v });
+        toast('Contraseña cambiada');
+      }
+      await start(r.usuario);
+    });
+  };
+  $('input', f)?.focus();
+}
+
+function renderCuenta() {
+  const u = state.me;
+  const html = `<div class="flex items-center gap-2">
+      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-white/15 text-[11px] font-bold text-white">${esc(initials(u.nombre))}</span>
+      <span class="min-w-0 leading-tight"><span class="block truncate text-sm font-medium text-white">${esc(u.nombre)}</span>
+      <span class="block text-[11px] text-slate-400">${esc(u.rol_nombre)}</span></span></div>
+    <div class="mt-2 flex gap-1">
+      <button class="rounded-md px-2 py-1 text-xs text-slate-300 hover:bg-white/10 hover:text-white" data-cuenta-clave>Cambiar contraseña</button>
+      <button class="rounded-md px-2 py-1 text-xs text-slate-300 hover:bg-white/10 hover:text-white" data-cuenta-salir>Cerrar sesión</button></div>`;
+  $('#cuenta').innerHTML = html;
+  $('#cuentaMobile').innerHTML = html;
+  $$('[data-cuenta-clave]').forEach((b) => b.addEventListener('click', () => showAuth('cambiar')));
+  $$('[data-cuenta-salir]').forEach((b) => b.addEventListener('click', logout));
+  // "Solo consulta" no ve los botones para justificar, completar nombres o dar de baja.
+  document.body.classList.toggle('solo-consulta', u.rol === 'consulta');
+}
+
+async function logout() {
+  await api('/api/auth/salir', { method: 'POST' }).catch(() => {});
+  state.me = null;
+  state.report = null;
+  $('#view').innerHTML = '';
+  showAuth('entrar');
+}
+
+// Una petición respondió 401: la sesión venció o la cerraron desde otro lado.
+function sesionTerminada() {
+  if (!state.me) return;
+  state.me = null;
+  showAuth('entrar', 'Su sesión terminó por inactividad. Vuelva a entrar.');
+}
+
+let started = false;
+async function start(me) {
+  state.me = me;
+  if (me.cambiar_clave) return showAuth('cambiar');
+  $('#auth').classList.add('hidden');
+  renderCuenta();
+  if (!started) {
+    started = true;
+    return init();
+  }
+  try {
+    await loadBranches();
+    await loadPendientes();
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  await refresh();
+}
+
+async function boot() {
+  try {
+    const s = await api('/api/auth/estado');
+    state.roles = s.roles;
+    if (!s.configurado) return showAuth('primero');
+    if (!s.usuario) return showAuth('entrar');
+    await start(s.usuario);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
 // ---------------------------------------------------------------- arranque
 async function init() {
-  // El nombre se captura en la barra lateral (computadora) o arriba (celular).
-  const userInputs = [$('#usuario'), $('#usuarioMobile')];
-  try {
-    for (const i of userInputs) i.value = localStorage.getItem('usuario') || '';
-  } catch {}
-  for (const input of userInputs) {
-    input.addEventListener('change', () => {
-      for (const i of userInputs) i.value = input.value;
-      try {
-        localStorage.setItem('usuario', usuario());
-      } catch {}
-    });
-  }
   $('#preset').addEventListener('change', () => {
     applyPreset();
     refresh();
@@ -1375,21 +1618,23 @@ async function init() {
   });
   $('#branch').addEventListener('change', refresh);
   $('#btnSync').addEventListener('click', (ev) => doSync(ev.currentTarget));
-  $('#btnExcel').addEventListener('click', () => {
-    location.href = `/api/export.xlsx?${query()}&usuario=${encodeURIComponent(usuario())}`;
-  });
+  $('#btnExcel').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+    await download(`/api/export.xlsx?${query()}`, 'reporte.xlsx');
+    toast('Reporte Excel descargado');
+  }));
   $('#btnPrint').addEventListener('click', () => window.print());
+  // Cada impresión (botón Imprimir o Ctrl+P) queda en el historial a nombre de quien imprime.
+  window.addEventListener('beforeprint', () => {
+    if (!state.me || !REPORT_VIEWS.includes(state.view)) return;
+    fetch('/api/registro/impresion', {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: $('#from').value, to: $('#to').value, branch: $('#branch').value, pantalla: state.view }),
+    }).catch(() => {});
+  });
   $('#btnPdf').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
-    // Se descarga con fetch para poder mostrar el aviso si algo falla.
-    const res = await fetch(`/api/reporte.pdf?${query()}&usuario=${encodeURIComponent(usuario())}`);
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'No se pudo crear el PDF.');
-    const url = URL.createObjectURL(await res.blob());
-    const a = Object.assign(document.createElement('a'), {
-      href: url,
-      download: (res.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/)?.[1] || 'reporte.pdf',
-    });
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    await download(`/api/reporte.pdf?${query()}`, 'reporte.pdf');
     toast('Reporte PDF descargado');
   }));
   setupSearch();
@@ -1410,4 +1655,4 @@ async function init() {
   await refresh();
 }
 
-init();
+boot();

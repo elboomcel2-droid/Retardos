@@ -75,3 +75,6 @@ dialog.drawer { margin: 0 0 0 auto; height: 100vh; max-height: 100vh; }
   .overflow-auto { overflow: visible !important; max-height: none !important; }
   .tbl thead th { position: static; }
 }
+
+/* Usuarios de solo consulta: sin botones para capturar o cambiar datos. */
+.solo-consulta :is([data-justify], [data-nombres], [data-baja]) { display: none !important; }

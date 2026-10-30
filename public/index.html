@@ -18,11 +18,7 @@
         </div>
       </div>
       <nav id="nav" class="flex flex-col gap-1"></nav>
-      <div class="mt-auto px-2">
-        <label class="text-[11px] font-medium tracking-wide text-slate-400 uppercase" for="usuario">Usuario</label>
-        <input id="usuario" class="mt-1 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:border-accent focus:outline-none" placeholder="Su nombre" autocomplete="name">
-        <p class="mt-1 text-[11px] text-slate-500">Su nombre queda registrado en cada cambio que haga.</p>
-      </div>
+      <div id="cuenta" class="mt-auto px-2"></div>
     </aside>
 
     <div class="flex min-w-0 flex-1 flex-col">
@@ -32,7 +28,7 @@
           <div class="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-xs font-black text-brand-900">EB</div>
           <nav id="navMobile" class="flex gap-1"></nav>
         </div>
-        <input id="usuarioMobile" class="mt-3 w-full rounded-lg border border-white/10 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-slate-400 focus:border-accent focus:outline-none" placeholder="Su nombre (queda registrado en cada cambio)" autocomplete="name">
+        <div id="cuentaMobile" class="mt-3"></div>
       </header>
 
       <!-- Filtros del periodo -->
@@ -88,7 +84,21 @@
     </div>
   </div>
 
-  <dialog id="modal" class="m-auto w-[min(720px,95vw)] rounded-2xl bg-white p-0 shadow-2xl"><div id="modalBody" class="max-h-[85vh] overflow-auto p-6"></div></dialog>
+  <!-- Inicio de sesión: cubre todo hasta que la persona entra -->
+  <div id="auth" class="fixed inset-0 z-[60] hidden overflow-auto bg-brand-900 px-4 py-10 print:hidden">
+    <div class="mx-auto w-full max-w-sm">
+      <div class="mb-6 flex items-center justify-center gap-3">
+        <div class="grid size-11 place-items-center rounded-xl bg-accent text-base font-black text-brand-900 shadow">EB</div>
+        <div class="leading-tight">
+          <div class="font-semibold text-white">El Boom Tractopartes</div>
+          <div class="text-xs text-slate-400">Control de asistencia y retardos</div>
+        </div>
+      </div>
+      <form id="authForm" class="card card-pad space-y-4" autocomplete="on"></form>
+    </div>
+  </div>
+
+  <dialog id="modal"class="m-auto w-[min(720px,95vw)] rounded-2xl bg-white p-0 shadow-2xl"><div id="modalBody" class="max-h-[85vh] overflow-auto p-6"></div></dialog>
   <dialog id="drawer" class="drawer w-[min(1200px,100vw)] bg-slate-50 p-0 shadow-2xl"><div id="drawerBody" class="h-full overflow-auto"></div></dialog>
   <div id="toasts" class="pointer-events-none fixed right-4 bottom-4 z-50 flex w-[min(420px,calc(100vw-2rem))] flex-col gap-2"></div>
   <script src="app.js"></script>

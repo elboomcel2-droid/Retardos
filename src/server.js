@@ -9,6 +9,7 @@ const { buildWorkbook } = require('./export');
 const { buildReportHtml } = require('./report-html');
 const { htmlToPdf } = require('./pdf');
 const { createLive, weekPlan } = require('./live');
+const auth = require('./auth');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -24,17 +25,12 @@ const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
-const user = (req) => {
-  let u = req.get('x-usuario') || '';
-  try {
-    u = decodeURIComponent(u);
-  } catch {}
-  return u.trim() || 'sin nombre';
-};
+// Nombre de quien inició sesión: es el que queda en el historial y en los reportes.
+const user = (req) => req.user?.nombre || 'sistema';
 
-function bad(msg) {
+function bad(msg, status = 400) {
   const e = new Error(msg);
-  e.status = 400;
+  e.status = status;
   return e;
 }
 
@@ -86,6 +82,152 @@ function computeReport(q) {
   return { from, to, today: today(), sucursal, branches, settings, employees, punches, justifications, result };
 }
 
+// ---------- inicio de sesión ----------
+const publicUser = (u) => ({
+  id: u.id,
+  login: u.login,
+  nombre: u.nombre,
+  rol: u.rol,
+  rol_nombre: auth.ROLES[u.rol]?.nombre || u.rol,
+  cambiar_clave: u.cambiar_clave,
+});
+
+function cleanNombre(nombre) {
+  const n = String(nombre || '').trim().replace(/\s+/g, ' ');
+  if (n.split(' ').length < 2) throw bad('Escriba el nombre completo de la persona (nombre y apellido).');
+  return n;
+}
+
+function cleanLogin(login) {
+  const l = auth.normalizeLogin(login);
+  if (!auth.LOGIN_RE.test(l)) throw bad('El usuario debe tener de 3 a 30 letras sin acentos, números, punto o guion bajo (ej. luz.samano).');
+  return l;
+}
+
+function cleanPassword(password) {
+  const err = auth.checkPassword(password);
+  if (err) throw bad(err);
+  return auth.hashPassword(password);
+}
+
+function startSession(res, u) {
+  const token = auth.newToken();
+  db.createSession(token, u.id, auth.SESSION_HOURS);
+  auth.setSessionCookie(res, token);
+}
+
+// Quién está usando el sistema (o si todavía no hay ningún usuario creado).
+app.get('/api/auth/estado', route((req) => {
+  const u = db.sessionUser(auth.readCookie(req), auth.SESSION_HOURS);
+  return { configurado: db.userCount() > 0, usuario: u ? publicUser(u) : null, roles: auth.ROLES };
+}));
+
+// Solo funciona mientras no exista ningún usuario: crea el primer administrador.
+app.post('/api/auth/primer-usuario', route((req, res) => {
+  if (db.userCount() > 0) throw bad('Ya hay usuarios registrados. Inicie sesión.', 403);
+  const nombre = cleanNombre(req.body.nombre);
+  const login = cleanLogin(req.body.login);
+  const id = db.createUser({ login, nombre, rol: 'admin', password: cleanPassword(req.body.password), cambiar_clave: false });
+  const u = db.user(id);
+  startSession(res, u);
+  db.log(u.nombre, 'Usuario creado', { login, nombre, rol: 'admin', primero: true });
+  return { usuario: publicUser(u) };
+}));
+
+app.post('/api/auth/entrar', route((req, res) => {
+  const login = auth.normalizeLogin(req.body.login);
+  const mins = auth.lockedMinutes(login);
+  if (mins) throw bad(`Demasiados intentos. Espere ${mins} minuto(s) e intente de nuevo.`, 429);
+  const u = db.userByLogin(login);
+  if (!u || !auth.verifyPassword(req.body.password, u.password)) {
+    auth.registerFail(login);
+    db.log(login || '(vacío)', 'Intento de acceso fallido', { login });
+    throw bad('Usuario o contraseña incorrectos.', 401);
+  }
+  if (!u.activo) {
+    db.log(u.nombre, 'Intento de acceso fallido', { login, motivo: 'usuario desactivado' });
+    throw bad('Este usuario está desactivado. Pida al administrador que lo active.', 403);
+  }
+  auth.clearFails(login);
+  startSession(res, u);
+  db.log(u.nombre, 'Inicio de sesión', { login });
+  return { usuario: publicUser(u) };
+}));
+
+app.post('/api/auth/salir', route((req, res) => {
+  const token = auth.readCookie(req);
+  const u = db.sessionUser(token, auth.SESSION_HOURS);
+  if (token) db.deleteSession(token);
+  auth.clearSessionCookie(res);
+  if (u) db.log(u.nombre, 'Cierre de sesión', { login: u.login });
+  return { ok: true };
+}));
+
+// Todo lo demás requiere haber iniciado sesión y tener permiso según el rol.
+app.use(['/api', '/reporte'], (req, res, next) => {
+  const u = db.sessionUser(auth.readCookie(req), auth.SESSION_HOURS);
+  if (!u) return res.status(401).json({ error: 'Su sesión terminó. Vuelva a iniciar sesión.' });
+  req.user = u;
+  const url = req.baseUrl + req.path;
+  // Con contraseña temporal solo se permite cambiarla.
+  if (u.cambiar_clave && url !== '/api/cuenta/clave') return res.status(403).json({ error: 'Primero cambie su contraseña temporal.' });
+  if (!auth.allowed(u.rol, req.method, url)) return res.status(403).json({ error: 'Su usuario no tiene permiso para esto. Pídalo al administrador.' });
+  next();
+});
+
+app.post('/api/cuenta/clave', route((req, res) => {
+  const u = db.userByLogin(req.user.login);
+  if (!auth.verifyPassword(req.body.actual, u.password)) throw bad('La contraseña actual no es correcta.');
+  if (req.body.actual === req.body.nueva) throw bad('La nueva contraseña debe ser diferente a la actual.');
+  db.setPassword(u.id, cleanPassword(req.body.nueva), false);
+  // Cierra las sesiones abiertas en otros equipos.
+  db.deleteSessionsOf(u.id, auth.readCookie(req));
+  db.log(u.nombre, 'Contraseña cambiada', { login: u.login });
+  return { usuario: publicUser(db.user(u.id)) };
+}));
+
+// ---------- usuarios (solo administrador) ----------
+app.get('/api/usuarios', route(() => db.users().map((u) => ({ ...u, rol_nombre: auth.ROLES[u.rol]?.nombre || u.rol }))));
+
+app.post('/api/usuarios', route((req) => {
+  const nombre = cleanNombre(req.body.nombre);
+  const login = cleanLogin(req.body.login);
+  if (!auth.ROLES[req.body.rol]) throw bad('Elija el tipo de acceso.');
+  if (db.userByLogin(login)) throw bad(`Ya existe el usuario «${login}».`);
+  db.createUser({ login, nombre, rol: req.body.rol, password: cleanPassword(req.body.password) });
+  db.log(user(req), 'Usuario creado', { login, nombre, rol: req.body.rol });
+  return { ok: true };
+}));
+
+app.put('/api/usuarios/:id', route((req) => {
+  const u = db.user(req.params.id);
+  if (!u) throw bad('Usuario no encontrado.');
+  const nombre = cleanNombre(req.body.nombre ?? u.nombre);
+  const rol = req.body.rol ?? u.rol;
+  const activo = req.body.activo ?? u.activo;
+  if (!auth.ROLES[rol]) throw bad('Elija el tipo de acceso.');
+  const dejaDeSerAdmin = u.rol === 'admin' && u.activo && (rol !== 'admin' || !activo);
+  if (dejaDeSerAdmin && db.activeAdmins() <= 1) throw bad('Debe quedar al menos un administrador activo.');
+  db.updateUser(u.id, { nombre, rol, activo });
+  if (!activo) db.deleteSessionsOf(u.id);
+  const cambios = {};
+  if (nombre !== u.nombre) cambios.nombre = nombre;
+  if (rol !== u.rol) cambios.rol = rol;
+  if (!!activo !== u.activo) cambios.activo = !!activo;
+  db.log(user(req), 'Usuario actualizado', { login: u.login, ...cambios });
+  return { ok: true };
+}));
+
+// Contraseña temporal: la persona tendrá que cambiarla al entrar.
+app.post('/api/usuarios/:id/clave', route((req) => {
+  const u = db.user(req.params.id);
+  if (!u) throw bad('Usuario no encontrado.');
+  db.setPassword(u.id, cleanPassword(req.body.password), true);
+  db.deleteSessionsOf(u.id);
+  db.log(user(req), 'Contraseña restablecida', { login: u.login, nombre: u.nombre });
+  return { ok: true };
+}));
+
 // ---------- configuración ----------
 app.get('/api/settings', route(() => {
   const s = db.getSettings();
@@ -95,6 +237,9 @@ app.get('/api/settings', route(() => {
 app.put('/api/settings', route((req) => {
   const patch = { ...req.body };
   if (patch.mysql_password === '********') delete patch.mysql_password;
+  if (req.user.rol !== 'admin' && Object.keys(patch).some((k) => k.startsWith('mysql_'))) {
+    throw bad('Solo el administrador puede cambiar la conexión con los checadores.', 403);
+  }
   for (const k of ['tolerancia_min', 'duplicado_min', 'retardos_por_falta', 'salida_anticipada_min', 'dias_contexto', 'dias_sin_checar', 'comida_min', 'comida_tolerancia_min', 'cerca_salida_min', 'retardo_falta_min', 'extra_min', 'mysql_port']) {
     if (patch[k] !== undefined) {
       patch[k] = Number(patch[k]);
@@ -102,7 +247,7 @@ app.put('/api/settings', route((req) => {
     }
   }
   if (patch.retardo_desde !== undefined && !['entrada', 'tolerancia'].includes(patch.retardo_desde)) throw bad('Opción no válida.');
-  if (patch.comida_desde !== undefined && !/^d{2}:d{2}$/.test(patch.comida_desde)) throw bad('Revise la hora de comida.');
+  if (patch.comida_desde !== undefined && !/^\d{2}:\d{2}$/.test(patch.comida_desde)) throw bad('Revise la hora de comida.');
   if (patch.auto_sync !== undefined) patch.auto_sync = patch.auto_sync === true || patch.auto_sync === 'true';
   db.saveSettings(patch);
   const logged = { ...patch };
@@ -119,7 +264,9 @@ app.get('/api/branches', route(() => {
 app.put('/api/branches/:id', route((req) => {
   const b = db.branch(req.params.id);
   if (!b) throw bad('Sucursal no encontrada.');
-  const body = req.body;
+  const body = { ...req.body };
+  // La base de datos de cada sucursal es parte de la conexión: solo el administrador.
+  if (req.user.rol !== 'admin') delete body.db_name;
   const schedule = body.schedule || b.schedule;
   if (!Array.isArray(schedule) || schedule.length !== 7) throw bad('El horario debe tener 7 días.');
   db.saveBranch(b.id, {
@@ -207,10 +354,15 @@ app.get('/api/report', route((req) => {
   return { from: r.from, to: r.to, settings: r.settings, ...r.result };
 }));
 
+// Constancia de cada reporte que sale del sistema (descargado o impreso).
+const reportLog = (req, accion, r, extra = {}) =>
+  db.log(user(req), accion, { desde: r.from, hasta: r.to, sucursal: r.sucursal, ...extra });
+
 app.get('/api/export.xlsx', route(async (req, res) => {
   const r = computeReport(req.query);
-  const buf = await buildWorkbook({ ...r, generadoPor: req.query.usuario });
+  const buf = await buildWorkbook({ ...r, generadoPor: user(req) });
   const name = `Asistencia_${r.branches.length === 1 ? r.branches[0].name : 'Todas'}_${r.from}_a_${r.to}.xlsx`;
+  reportLog(req, 'Descarga de Excel', r, { archivo: name });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
   res.send(Buffer.from(buf));
@@ -219,16 +371,27 @@ app.get('/api/export.xlsx', route(async (req, res) => {
 // Vista previa del reporte imprimible y su versión PDF (mismas cifras que el Excel).
 app.get('/reporte', route((req, res) => {
   const r = computeReport(req.query);
-  res.type('html').send(buildReportHtml({ ...r, generadoPor: req.query.usuario }));
+  reportLog(req, 'Vista del reporte imprimible', r);
+  res.type('html').send(buildReportHtml({ ...r, generadoPor: user(req) }));
 }));
 
 app.get('/api/reporte.pdf', route(async (req, res) => {
   const r = computeReport(req.query);
-  const pdf = await htmlToPdf(buildReportHtml({ ...r, generadoPor: req.query.usuario }));
+  const pdf = await htmlToPdf(buildReportHtml({ ...r, generadoPor: user(req) }));
   const name = `Asistencia_${r.branches.length === 1 ? r.branches[0].name : 'Todas'}_${r.from}_a_${r.to}.pdf`;
+  reportLog(req, 'Descarga de PDF', r, { archivo: name });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
   res.send(pdf);
+}));
+
+// El navegador avisa justo antes de imprimir (botón Imprimir o Ctrl+P).
+app.post('/api/registro/impresion', route((req) => {
+  const { from, to } = range(req.body);
+  const branches = selectedBranches(req.body);
+  const sucursal = branches.length === 1 ? `${branches[0].code} ${branches[0].name}` : 'Todas las sucursales';
+  reportLog(req, 'Impresión', { from, to, sucursal }, { pantalla: String(req.body.pantalla || '').slice(0, 60) });
+  return { ok: true };
 }));
 
 app.get('/api/punches', route((req) => {
