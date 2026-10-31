@@ -52,6 +52,9 @@ const icon = (name, cls = 'size-4') =>
 
 // ¿El usuario que inició sesión tiene este permiso? (la lista viene del servidor)
 const puede = (p) => !!state.me?.puede?.includes(p);
+// Envío por correo apagado por ahora (igual que CORREO_ACTIVO en src/server.js).
+const CORREO_ACTIVO = false;
+const puedeCorreo = () => CORREO_ACTIVO && puede('correo');
 
 // Tercer dato: permisos con los que se ve la sección (basta uno).
 const NAV = [
@@ -952,7 +955,7 @@ function personasTab(r) {
   };
   return `
     <p class="mb-4 max-w-3xl text-sm text-slate-500">Cada persona con todos sus días del periodo: horario, entrada, comida, salida, horas, resultado, checadas y la explicación.
-      Elija a quién incluir y descárguelo en PDF, imprímalo${puede('correo') ? ' o envíelo por correo' : ''}. El PDF trae una hoja por persona con espacio para firmas.</p>
+      Elija a quién incluir y descárguelo en PDF, imprímalo${puedeCorreo() ? ' o envíelo por correo' : ''}. El PDF trae una hoja por persona con espacio para firmas.</p>
     <div class="grid gap-5 lg:grid-cols-[280px_1fr]">
       <aside class="card self-start lg:sticky lg:top-28">
         <div class="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
@@ -968,7 +971,7 @@ function personasTab(r) {
         <div class="grid gap-2 border-t border-slate-100 p-3">
           <button class="btn btn-primary" id="pPdf" ${sel.length ? '' : 'disabled'}>${icon('pdf')} Descargar PDF</button>
           <button class="btn btn-secondary" id="pPrint" ${sel.length ? '' : 'disabled'}>${icon('print')} Imprimir</button>
-          ${puede('correo') ? `<button class="btn btn-secondary" id="pMail" ${sel.length ? '' : 'disabled'}>${icon('mail')} Enviar por correo a RH</button>` : ''}
+          ${puedeCorreo() ? `<button class="btn btn-secondary" id="pMail" ${sel.length ? '' : 'disabled'}>${icon('mail')} Enviar por correo a RH</button>` : ''}
         </div>
       </aside>
       <div class="min-w-0 space-y-5">
@@ -1417,7 +1420,7 @@ async function viewCierres() {
     <div class="mb-6 grid gap-3 text-sm text-slate-600 md:grid-cols-3">
       ${[['1', 'Revise', 'Justifique o anote las faltas, retardos y checadas incompletas de la quincena.'],
          ['2', 'Pague', 'Descargue o imprima el reporte (general y por persona) y realice el pago.'],
-         ['3', 'Cierre', `Pulse <b>Cerrar quincena</b>. Se guarda una copia y, si el correo está configurado, se envía el PDF a RH. Si hubo un error, ${Object.values(state.roles).filter((r) => r.puede.includes('reabrir')).map((r) => r.nombre).join(' o ')} la puede reabrir.`]]
+         ['3', 'Cierre', `Pulse <b>Cerrar quincena</b>. Se guarda una copia${CORREO_ACTIVO ? ' y, si el correo está configurado, se envía el PDF a RH' : ''}. Si hubo un error, ${Object.values(state.roles).filter((r) => r.puede.includes('reabrir')).map((r) => r.nombre).join(' o ')} la puede reabrir.`]]
         .map(([n, t, d]) => `<div class="card card-pad flex gap-3"><span class="grid size-7 shrink-0 place-items-center rounded-full bg-brand-700 text-xs font-bold text-white">${n}</span><div><b class="text-slate-900">${t}</b><p class="mt-0.5">${d}</p></div></div>`).join('')}
     </div>
     <div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl tbl-stack"><thead><tr><th>Quincena</th><th>Estado</th><th></th></tr></thead><tbody>${filas}</tbody></table></div></div>
@@ -1448,7 +1451,7 @@ async function showCerrar(desde, hasta) {
   const porRevisar = r.days.filter((d) => ['FALTA', 'INCOMPLETO', 'RETARDO'].includes(d.estado) && !d.justificacion).length;
   const hoy = iso(new Date());
   const destinatarios = (s.correo_rh || '').split(/[,;\s]+/).filter(Boolean);
-  const puedeEnviar = s.correo_configurado && destinatarios.length > 0;
+  const puedeEnviar = CORREO_ACTIVO && s.correo_configurado && destinatarios.length > 0;
   openDialog('modal', `
     <div class="mb-4 flex items-start justify-between gap-4"><div>
       <h2 class="text-lg font-bold text-slate-900">Cerrar la quincena del ${fmtDate(desde)} al ${fmtDate(hasta)}</h2>
@@ -1460,10 +1463,10 @@ async function showCerrar(desde, hasta) {
     ${porRevisar ? `<div class="mb-4">${notice('warn', `Hay <b>${porRevisar}</b> día(s) con retardo, falta o checada incompleta <b>sin nota</b>. Si alguno tenía permiso, justifíquelo antes de cerrar. <button class="font-semibold underline" id="cRevisar">Revisar en el detalle diario →</button>`)}</div>` : ''}
     ${hasta === hoy ? `<div class="mb-4">${notice('warn', 'La quincena termina <b>hoy</b>: las checadas que falten de hoy ya no se tomarán en cuenta.')}</div>` : ''}
     <label class="field mb-4">Nota (opcional)<input id="cNota" class="input" maxlength="300" placeholder="Ej. Pagada en efectivo el ${fmtDate(hasta)}"></label>
-    <label class="mb-2 flex items-start gap-2 text-sm ${puedeEnviar ? '' : 'opacity-60'}">
+    ${!CORREO_ACTIVO ? '' : `<label class="mb-2 flex items-start gap-2 text-sm ${puedeEnviar ? '' : 'opacity-60'}">
       <input type="checkbox" class="checkbox mt-0.5" id="cEnviar" ${puedeEnviar && s.correo_al_cerrar ? 'checked' : ''} ${puedeEnviar ? '' : 'disabled'}>
       <span>Enviar el reporte en PDF (general y por persona) por correo${puedeEnviar ? ` a <b>${esc(destinatarios.join(', '))}</b>` : ''}
-        ${puedeEnviar ? '' : `<span class="block text-xs text-slate-500">${s.correo_configurado ? 'Falta escribir a quién enviarlo en Configuración → Envío por correo.' : 'El correo todavía no está configurado (lo hace sistemas en Configuración).'}</span>`}</span></label>
+        ${puedeEnviar ? '' : `<span class="block text-xs text-slate-500">${s.correo_configurado ? 'Falta escribir a quién enviarlo en Configuración → Envío por correo.' : 'El correo todavía no está configurado (lo hace sistemas en Configuración).'}</span>`}</span></label>`}
     <div class="mt-6 flex flex-wrap justify-end gap-2">
       <button class="btn btn-secondary" data-close>Cancelar</button>
       <button class="btn btn-primary" id="cOk">${icon('lock')} Cerrar quincena</button></div>`);
@@ -1473,7 +1476,7 @@ async function showCerrar(desde, hasta) {
     verPeriodo(desde, hasta, 'detalle');
   });
   $('#cOk').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
-    const out = await api('/api/cierres', { method: 'POST', body: { desde, hasta, nota: $('#cNota').value, enviar: $('#cEnviar').checked } });
+    const out = await api('/api/cierres', { method: 'POST', body: { desde, hasta, nota: $('#cNota').value, enviar: !!$('#cEnviar')?.checked } });
     $('#modal').close();
     toast(out.correo ? `Quincena cerrada. Se está enviando el PDF a ${out.correo.join(', ')} (tarda unos segundos; el resultado queda en esta pantalla).` : 'Quincena cerrada');
     await viewCierres();
@@ -1642,7 +1645,7 @@ async function viewConfig() {
   };
   const destinatarios = (s.correo_rh || '').split(/[,;\s]+/).filter(Boolean);
   $('#view').innerHTML = `
-    ${pageHeader('Configuración', 'Horarios, reglas de puntualidad, días festivos, empleados y envío por correo.')}
+    ${pageHeader('Configuración', `Horarios, reglas de puntualidad, días festivos${CORREO_ACTIVO ? ', empleados y envío por correo' : ' y empleados'}.`)}
 
     ${!R ? '' : section('Reglas de puntualidad', 'Se aplican a todas las sucursales.',
       `<div id="ruleForm" class="space-y-5">
@@ -1709,7 +1712,7 @@ async function viewConfig() {
         ${inp('dias_sin_checar', 'Avisar si alguien lleva estos días de trabajo sin checar', s.dias_sin_checar, 'number', 'min="1"')}
         <button id="saveAdv" class="btn btn-primary">Guardar ajustes</button></div>`)}
 
-    ${!puede('correo') ? '' : section('Envío por correo', `Correos que reciben el reporte en PDF (general y por persona): al cerrar una quincena y cuando alguien pulse <b>Enviar por correo</b>.
+    ${!puedeCorreo() ? '' : section('Envío por correo', `Correos que reciben el reporte en PDF (general y por persona): al cerrar una quincena y cuando alguien pulse <b>Enviar por correo</b>.
       ${s.correo_configurado ? '' : '<b class="text-amber-700">El servidor de correo todavía no está configurado: pídalo a sistemas.</b>'}`,
       `<div id="mailForm" class="grid items-end gap-4 lg:grid-cols-[1fr_auto]">
         <label class="field">Enviar a (separe con comas)<input class="input" name="correo_rh" value="${esc(s.correo_rh)}" placeholder="rh@elboom.com.mx, nomina@elboom.com.mx" inputmode="email" autocomplete="off"></label>
@@ -1737,7 +1740,7 @@ async function viewConfig() {
     ${!puede('conexion') ? '' : `<details class="card mb-6 group">
       <summary class="flex cursor-pointer list-none items-center justify-between gap-3 p-5">
         <div><h2 class="text-base font-semibold text-slate-900">Opciones avanzadas</h2>
-          <p class="text-sm text-slate-500">Solo para el área de sistemas: conexión con los checadores y servidor de correo. Normalmente no hay que tocar nada aquí.</p></div>
+          <p class="text-sm text-slate-500">Solo para el área de sistemas: conexión con los checadores${CORREO_ACTIVO ? ' y servidor de correo' : ''}. Normalmente no hay que tocar nada aquí.</p></div>
         <span class="text-slate-400 transition group-open:rotate-180">▾</span>
       </summary>
       <div class="space-y-6 border-t border-slate-100 p-5">
@@ -1759,7 +1762,7 @@ async function viewConfig() {
               <div data-test-out class="text-xs sm:col-start-2 sm:col-span-2"></div>
             </div>`).join('')}</div>
         </div>
-        <div>
+        ${!CORREO_ACTIVO ? '' : `<div>
           <h3 class="mb-1 text-sm font-semibold text-slate-900">Servidor de correo (SMTP)</h3>
           <p class="mb-3 text-xs text-slate-500">Cuenta desde la que salen los reportes. Con Gmail o Microsoft 365 use una "contraseña de aplicación". Puerto 587 (normal) o 465 (cifrado desde el inicio).</p>
           <div id="smtpForm" class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1768,7 +1771,7 @@ async function viewConfig() {
             ${inp('smtp_user', 'Usuario', s.smtp_user, 'text', 'autocomplete="off"')}${inp('smtp_password', 'Contraseña', s.smtp_password, 'password', 'autocomplete="new-password"')}
             <label class="flex items-center gap-2 pb-2 text-sm text-slate-700"><input type="checkbox" class="checkbox" name="smtp_seguro" ${s.smtp_seguro ? 'checked' : ''}> Conexión cifrada desde el inicio (SSL)</label>
             <button id="saveSmtp" class="btn btn-primary">Guardar servidor de correo</button></div>
-        </div>
+        </div>`}
         <details class="text-sm"><summary class="cursor-pointer font-medium text-brand-700">Consulta SQL para exportar checadas a mano</summary>
 <pre class="mt-2 overflow-auto rounded-lg bg-slate-900 p-3 font-mono text-xs leading-relaxed text-slate-100">SELECT ("01 ALPUYECA") AS tienda,
   personnel_employee.emp_code, personnel_employee.first_name,
@@ -2120,7 +2123,7 @@ async function viewUsuarios() {
   const roles = Object.entries(state.roles);
   const matriz = `<details class="card mb-6" open><summary class="cursor-pointer px-5 py-4 text-base font-semibold text-slate-900">Qué puede hacer cada tipo de acceso</summary>
     <div class="overflow-auto border-t border-slate-100"><table class="tbl"><thead><tr><th></th>${roles.map(([, r]) => `<th class="text-center">${esc(r.nombre)}</th>`).join('')}</tr></thead>
-    <tbody>${Object.entries(state.permisos || {}).map(([p, desc]) => `<tr><td class="min-w-56 text-slate-700">${esc(desc)}</td>
+    <tbody>${Object.entries(state.permisos || {}).filter(([p]) => CORREO_ACTIVO || p !== 'correo').map(([p, desc]) => `<tr><td class="min-w-56 text-slate-700">${esc(desc)}</td>
       ${roles.map(([, r]) => `<td class="text-center">${r.puede.includes(p) ? '<span class="font-bold text-emerald-600" aria-label="Sí">✓</span>' : '<span class="text-slate-300" aria-label="No">—</span>'}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
   $('#view').innerHTML = `
     ${pageHeader('Usuarios', 'Quién puede entrar al sistema y qué puede hacer. Cada acción queda en el Historial con el nombre de la persona.')}
@@ -2145,7 +2148,7 @@ async function viewUsuarios() {
       <td class="whitespace-nowrap"><button class="btn btn-primary btn-sm" data-u-save>Guardar</button>
         ${u.id === state.me.id
           ? '<button class="btn btn-secondary btn-sm" data-cuenta-clave>Cambiar mi contraseña</button>'
-          : '<button class="btn btn-secondary btn-sm" data-u-pass>Contraseña temporal</button>'}</td></tr>`).join('')}
+          : '<button class="btn btn-secondary btn-sm" data-u-pass>Contraseña temporal</button> <button class="btn btn-danger btn-sm" data-u-del>Eliminar</button>'}</td></tr>`).join('')}
     </tbody></table></div></div>`;
   $('#uNew').addEventListener('submit', (ev) => {
     ev.preventDefault();
@@ -2169,6 +2172,15 @@ async function viewUsuarios() {
       await viewUsuarios();
     }));
     $('[data-cuenta-clave]', tr)?.addEventListener('click', () => showAuth('cambiar'));
+    $('[data-u-del]', tr)?.addEventListener('click', (ev) => {
+      const u = users.find((x) => String(x.id) === id);
+      if (!confirm(`¿Eliminar a «${u.nombre}» (${u.login})? Ya no podrá entrar al sistema y no se puede deshacer. Lo que hizo seguirá en el Historial con su nombre. Si solo es temporal, mejor desmarque "Activo".`)) return;
+      busy(ev.currentTarget, async () => {
+        await api(`/api/usuarios/${id}`, { method: 'DELETE' });
+        toast('Usuario eliminado');
+        await viewUsuarios();
+      });
+    });
     $('[data-u-pass]', tr)?.addEventListener('click', (ev) => {
       const password = prompt('Escriba una contraseña temporal: al menos 8 caracteres, con letras y números. La persona deberá cambiarla al entrar:');
       if (!password) return;

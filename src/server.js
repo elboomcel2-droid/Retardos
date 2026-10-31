@@ -8,6 +8,9 @@ const importer = require('./importer');
 const { buildWorkbook } = require('./export');
 const { buildReportHtml, buildPersonasHtml } = require('./report-html');
 const mailer = require('./mailer');
+// Envío de reportes por correo apagado por ahora. Para volver a usarlo, ponga
+// true aquí y en CORREO_ACTIVO de public/app.js.
+const CORREO_ACTIVO = false;
 const { htmlToPdf } = require('./pdf');
 const { createLive, weekPlan } = require('./live');
 const auth = require('./auth');
@@ -393,6 +396,17 @@ app.put('/api/usuarios/:id', route((req) => {
   return { ok: true };
 }));
 
+// Para quien ya no trabaja aquí. El historial conserva su nombre en lo que hizo.
+app.delete('/api/usuarios/:id', route((req) => {
+  const u = db.user(req.params.id);
+  if (!u) throw bad('Usuario no encontrado.');
+  if (u.id === req.user.id) throw bad('No puede eliminar su propio usuario. Pídalo a otro administrador.');
+  if (u.rol === 'admin' && u.activo && db.activeAdmins() <= 1) throw bad('Debe quedar al menos un administrador activo.');
+  db.deleteUser(u.id);
+  db.log(user(req), 'Usuario eliminado', { login: u.login, nombre: u.nombre, rol: u.rol });
+  return { ok: true };
+}));
+
 // Contraseña temporal: la persona tendrá que cambiarla al entrar.
 app.post('/api/usuarios/:id/clave', route((req) => {
   const u = db.user(req.params.id);
@@ -651,6 +665,11 @@ async function enviarReporte(q, autor, asunto) {
   db.log(autor, 'Reporte enviado por correo', { desde: r.from, hasta: r.to, sucursal: r.sucursal, destinatarios, archivos: attachments.map((a) => a.filename) });
   return destinatarios;
 }
+
+app.use('/api/correo', (req, res, next) => {
+  if (!CORREO_ACTIVO) return res.status(403).json({ error: 'El envío por correo está desactivado por ahora.' });
+  next();
+});
 
 app.post('/api/correo/enviar', route(async (req) => {
   const destinatarios = await enviarReporte(req.body, user(req));
@@ -988,7 +1007,7 @@ app.post('/api/cierres', route(async (req) => {
   // Envío automático a RH en segundo plano: crear los PDF tarda unos segundos.
   const s = db.getSettings();
   const destinatarios = mailer.parseList(s.correo_rh);
-  const enviar = (req.body.enviar ?? s.correo_al_cerrar) && mailer.configurado(s) && destinatarios.length > 0;
+  const enviar = CORREO_ACTIVO && (req.body.enviar ?? s.correo_al_cerrar) && mailer.configurado(s) && destinatarios.length > 0;
   if (enviar) {
     enviarReporte({ from: desde, to: hasta, branch: 'all' }, autor, `Quincena cerrada ${fmtFecha(desde)} al ${fmtFecha(hasta)} · Reporte de asistencia`)
       .then((lista) => db.marcarCorreo(id, `Enviado a ${lista.join(', ')}`))

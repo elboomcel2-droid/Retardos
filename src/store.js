@@ -565,6 +565,13 @@ class Store {
     this.db.prepare('UPDATE users SET nombre = ?, rol = ?, activo = ?, branch_id = ? WHERE id = ?').run(nombre, rol, activo ? 1 : 0, branch_id, id);
   }
 
+  deleteUser(id) {
+    this.tx(() => {
+      this.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+      this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
+    });
+  }
+
   setPassword(id, password, cambiar_clave) {
     this.db.prepare('UPDATE users SET password = ?, cambiar_clave = ? WHERE id = ?').run(password, cambiar_clave ? 1 : 0, id);
   }
