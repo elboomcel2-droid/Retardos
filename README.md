@@ -26,6 +26,7 @@ Después, en **Usuarios**, el administrador da acceso a cada persona con un usua
 | Ver panel, empleados y detalle; descargar Excel/PDF e imprimir | ✓ | ✓ | ✓ | ✓ |
 | Actualizar las checadas desde los checadores | ✓ | ✓ | ✓ | ✓ |
 | Justificar o anotar retardos y faltas | ✓ | ✓ | ✓ | — |
+| Registrar pláticas, actas y compromisos (seguimiento) | ✓ | ✓ | — | — |
 | Nombres completos, bajas, horarios especiales y vincular sucursales | ✓ | ✓ | — | — |
 | Reglas de puntualidad, horarios, festivos y ajustes del cálculo | ✓ | ✓ | — | — |
 | Cargar checadas desde archivo | ✓ | ✓ | — | — |
@@ -115,6 +116,32 @@ aplicada.
   todos sus días (horario, entrada, comida, salida, horas, resultado, checadas y explicación), una
   hoja por persona con espacio para firmas. Se elige a quién incluir y se descarga en PDF, se
   imprime o se envía por correo.
+
+## Lectura para RH (Panel, PDF y Excel)
+
+El Panel, el PDF general y la hoja **Lo más importante** del Excel responden tres preguntas:
+¿va mejorando?, ¿a quién hay que atender? y ¿son confiables los datos? Los tiempos siempre se
+muestran en **minutos** (así lo pidió RH). La lógica está en `src/insights.js`.
+
+| Sección | Qué muestra |
+|---|---|
+| En pocas palabras | 4 a 8 frases con lo más importante del periodo (también van en el correo) |
+| Comparación | Cada indicador contra la quincena anterior, el mes anterior o los mismos días antes. Si el periodo no ha terminado, se compara contra el anterior hasta el mismo día |
+| ¿Qué tan confiables son estos datos? | Semáforo por sucursal: rojo si el checador lleva 2+ días de trabajo sin mandar checadas o hubo 3+ días sin datos; amarillo si falta un día, hay nombres por completar o posibles personas repetidas |
+| Requieren atención | Reincidentes (retardos en las últimas 3 quincenas seguidas), quien empeoró (el doble de su promedio y 3+ retardos), quien está a 1 retardo de que se le cuente una falta, y patrones de las últimas 6 semanas (tarde el mismo día de la semana 3+ veces y 60%+ de las veces, comida larga 3+ veces, salir antes 3+ veces). Muestra la última acción de RH |
+| Cuadro de honor | Puntualidad perfecta en el periodo (5+ días a tiempo, sin retardos, faltas ni checadas incompletas) y rachas de 10+ días de trabajo seguidos a tiempo (descansos, festivos y justificados no la cortan) |
+| Tendencia | Puntualidad, retardos, minutos de retardo y faltas de las últimas 6 quincenas por sucursal (las quincenas cerradas salen de su copia) |
+| ¿A qué hora llegan? | Mapa de calor: entradas por día de la semana según qué tan antes o después de su hora llegaron, y la hora a la que llega la mitad del personal en cada sucursal |
+
+Cada indicador tiene un **ⓘ** que explica cómo se calcula. En **Usuarios** se puede asignar a cada
+persona la sucursal con la que abre el sistema (para gerentes); solo es el filtro inicial.
+
+### Seguimiento de RH
+
+En la ficha de cada empleado, RH registra pláticas, llamadas de atención, actas, compromisos o
+reconocimientos (fecha, tipo y nota). El sistema compara los retardos, minutos y faltas de los 30
+días antes con los 30 días después para ver si mejoró. Aparece también en el reporte por persona y
+en el Historial.
 
 ## Cierre de quincena
 

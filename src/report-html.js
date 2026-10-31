@@ -97,7 +97,74 @@ function table(headers, rows, { num = [] } = {}) {
     <tbody>${rows.map((r) => `<tr>${r.map((v, i) => `<td class="${num.includes(i) ? 'n' : ''}">${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
 }
 
-function buildReportHtml({ from, to, today, sucursal, result, settings, generadoPor }) {
+// Una línea por sucursal a lo largo de las quincenas. El color sigue a la
+// sucursal (su posición fija), nunca a su lugar en el ranking.
+const SLOTS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+function lines(cats, series, { max, unit = '', width = 470, height = 220 } = {}) {
+  if (!cats.length || !series.length) return '<p class="empty">Sin datos en el periodo.</p>';
+  const left = 40, right = 140, top = 14, bottom = 28;
+  const plotW = width - left - right;
+  const plotH = height - top - bottom;
+  const vals = series.flatMap((s) => s.values.filter((v) => v != null));
+  const ymax = max ?? niceMax(Math.max(...vals, 1));
+  const x = (i) => left + (cats.length === 1 ? plotW / 2 : (i / (cats.length - 1)) * plotW);
+  const y = (v) => top + plotH - (v / ymax) * plotH;
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => Math.round(ymax * t));
+  const grid = ticks.map((t) => `<line x1="${left}" x2="${left + plotW}" y1="${y(t)}" y2="${y(t)}" stroke="${t ? C.grid : C.axis}"/>
+    <text x="${left - 6}" y="${y(t) + 4}" text-anchor="end" class="tick">${t}${unit}</text>`).join('');
+  const labels = cats.map((c, i) => `<text x="${x(i)}" y="${height - bottom + 16}" text-anchor="middle" class="tick">${esc(c)}</text>`).join('');
+  // Etiquetas al final de cada línea, separadas para que no se encimen.
+  const ends = series
+    .map((s) => {
+      const i = s.values.map((v, j) => (v == null ? -1 : j)).filter((j) => j >= 0).pop();
+      return i == null ? null : { s, i, y: y(s.values[i]) };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.y - b.y);
+  for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 12) ends[k].y = ends[k - 1].y + 12;
+  const paths = series.map((s) => {
+    let d = '';
+    s.values.forEach((v, i) => {
+      if (v == null) return;
+      d += `${d && s.values[i - 1] != null ? 'L' : 'M'}${x(i)},${y(v)}`;
+    });
+    const dots = s.values.map((v, i) => (v == null ? '' : `<circle cx="${x(i)}" cy="${y(v)}" r="3.5" fill="${s.color}" stroke="#fff" stroke-width="2"><title>${esc(s.name)} · ${esc(cats[i])}: ${v}${unit}</title></circle>`)).join('');
+    return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>${dots}`;
+  }).join('');
+  const tags = ends.map((e) => `<text x="${x(e.i) + 8}" y="${e.y + 4}" class="lbl">${esc(e.s.short || e.s.name)} ${e.s.values[e.i]}${unit}</text>`).join('');
+  return `<svg viewBox="0 0 ${width} ${height}" width="100%" role="img">${grid}${labels}${paths}${tags}</svg>`;
+}
+
+// Series de la tendencia: una por sucursal, con su color fijo.
+function trendSeries(T, key) {
+  const suc = new Map();
+  T.forEach((q, i) => q.sucursales.forEach((s) => {
+    if (!suc.has(s.branch_id)) suc.set(s.branch_id, { name: s.sucursal, short: s.sucursal.slice(3), color: SLOTS[s.slot % SLOTS.length] || SLOTS[0], values: T.map(() => null) });
+    suc.get(s.branch_id).values[i] = s[key];
+  }));
+  return [...suc.values()];
+}
+
+// Mapa de calor: más oscuro = más personas. Una sola tonalidad (azul).
+function heatTable(L) {
+  if (!L.total) return '<p class="empty">Sin entradas que evaluar en el periodo.</p>';
+  const cell = (v) => {
+    if (!v) return '<td class="hm" style="background:#f8fafc;color:#94a3b8">0</td>';
+    const i = Math.min(C.rangos.length - 1, Math.floor((v / L.max) * C.rangos.length - 0.0001));
+    return `<td class="hm" style="background:${C.rangos[i]};color:${i >= 2 ? '#fff' : C.ink}">${v}</td>`;
+  };
+  return `<table class="heat"><thead><tr><th>Llegada</th>${L.dias.map((d) => `<th class="n">${esc(d)}</th>`).join('')}<th class="n">Total</th></tr></thead>
+    <tbody>${L.filas.map((f) => `<tr${f.tarde && f === L.filas.find((x) => x.tarde) ? ' class="sep"' : ''}><td>${esc(f.rango)}</td>${f.valores.map(cell).join('')}<td class="n"><b>${f.total}</b></td></tr>`).join('')}</tbody></table>`;
+}
+
+const flecha = (m, unit = '') => {
+  if (!m) return '—';
+  if (!m.delta) return 'igual';
+  const n = Math.abs(m.delta);
+  return `${m.delta > 0 ? '▲' : '▼'} ${n}${unit} ${m.mejor ? '(mejor)' : '(peor)'}`;
+};
+
+function buildReportHtml({ from, to, today, sucursal, result, settings, generadoPor, insights: I }) {
   const A = analyze(result, { from, to, today, settings });
   const K = A.kpis;
   const tiles = [
@@ -126,7 +193,25 @@ function buildReportHtml({ from, to, today, sucursal, result, settings, generado
     <p class="gen">Generado el ${new Date().toLocaleString('es-MX')}${generadoPor ? `<br>por ${esc(generadoPor)}` : ''}</p></header>`;
 
   const pages = [];
-  pages.push(`${header}
+  if (I) {
+    const M = I.comparativo?.metricas;
+    const comp = I.comparativo
+      ? table(['Indicador', 'Este periodo', `Antes (${fmtDate(I.comparativo.desde)} al ${fmtDate(I.comparativo.hasta)})`, 'Cambio'],
+          [['Puntualidad', 'puntualidad', '%', ' pts'], ['Asistencia', 'asistencia', '%', ' pts'], ['Retardos', 'retardos', '', ''], ['Minutos de retardo', 'minutos_retardo', '', ' min'],
+           ['Personas con retardo', 'personas_con_retardo', '', ''], ['Faltas', 'faltas', '', ''], ['Faltas por retardos', 'faltas_por_retardos', '', ''], ['Checadas incompletas', 'incompletas', '', ''], ['Se pasaron en la comida', 'excesos_comida', '', '']]
+            .map(([l, k, u, du]) => [l, M[k] ? `${M[k].actual}${u}` : '—', M[k] ? `${M[k].anterior}${u}` : '—', flecha(M[k], du)]),
+          { num: [1, 2] })
+      : '<p class="empty">No hay datos del periodo anterior para comparar.</p>';
+    const rojo = I.calidad.filter((q) => q.nivel !== 'verde');
+    pages.push(`${header}
+      <section class="card resumen"><h2>En pocas palabras</h2><ul>${I.resumen.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></section>
+      ${rojo.length ? `<section class="card aviso"><h2>¿Qué tan confiables son estos datos?</h2>
+        <ul>${rojo.map((q) => `<li><b class="${q.nivel}">${q.nivel === 'rojo' ? '● No confiable' : '● Revisar'}</b> ${esc(q.sucursal)}: ${esc(q.motivos.join('; '))}.</li>`).join('')}</ul>
+        <p class="sub">Las demás sucursales tienen sus checadas al día.</p></section>` : ''}
+      <section class="card"><h2>Comparado con ${esc(I.comparativo?.texto || 'el periodo anterior')}</h2>
+        <p class="sub">${I.comparativo?.parcial ? 'El periodo aún no termina: se compara contra los mismos días del periodo anterior.' : 'Mismo tipo de periodo, justo antes.'}</p>${comp}</section>`);
+  }
+  pages.push(`${I ? '' : header}
     <section class="tiles">${tiles.map(([l, v, s]) => `<div class="tile"><div class="tl">${esc(l)}</div><div class="tv">${esc(v)}</div><div class="ts">${esc(s)}</div></div>`).join('')}</section>
     <section class="card"><h2>Retardos y faltas por día</h2><p class="sub">Cuántas personas llegaron tarde y cuántas faltaron cada día.</p>
       ${legend([['Retardos', C.retardo], ['Faltas', C.falta]])}
@@ -163,6 +248,40 @@ function buildReportHtml({ from, to, today, sucursal, result, settings, generado
       ${table(['Sucursal', 'Empleados', '% Puntualidad', '% Asistencia', 'Retardos', 'Min. de retardo', 'Faltas', 'Justificados', 'Checadas incompletas', 'Se pasaron en comida'],
         A.sucursales.map((s) => [s.sucursal, s.empleados, pct(s.puntualidad), pct(s.asistencia), s.retardos, s.minutos_retardo, s.faltas, s.justificados, s.incompletas, s.excesos_comida]),
         { num: [1, 2, 3, 4, 5, 6, 7, 8, 9] })}</section>`);
+
+  if (I) {
+    const T = I.tendencia;
+    const cats = T.map((q) => q.etiqueta);
+    pages.push(`<section class="grid2">
+        <div class="card"><h2>Puntualidad por quincena</h2><p class="sub">Porcentaje de entradas a tiempo en las últimas ${T.length} quincenas, por sucursal.</p>
+          ${legend(trendSeries(T, 'puntualidad').map((s) => [s.name, s.color]))}${lines(cats, trendSeries(T, 'puntualidad'), { max: 100, unit: '%' })}</div>
+        <div class="card"><h2>Minutos de retardo por quincena</h2><p class="sub">Suma de los minutos que llegaron tarde, por sucursal.</p>
+          ${legend(trendSeries(T, 'minutos_retardo').map((s) => [s.name, s.color]))}${lines(cats, trendSeries(T, 'minutos_retardo'))}</div>
+      </section>
+      <section class="card"><h2>Tendencia por quincena (todas las sucursales del reporte)</h2>
+        ${table(['Quincena', '% Puntualidad', 'Retardos', 'Min. de retardo', 'Faltas', 'Sucursal más puntual', 'Sucursal menos puntual'],
+          T.map((q) => {
+            const r = q.sucursales.filter((s) => s.puntualidad != null).sort((a, b) => b.puntualidad - a.puntualidad);
+            return [q.etiqueta, pct(q.total.puntualidad), q.total.retardos, q.total.minutos_retardo, q.total.faltas,
+              r.length > 1 ? `${r[0].sucursal} (${pct(r[0].puntualidad)})` : '—', r.length > 1 ? `${r[r.length - 1].sucursal} (${pct(r[r.length - 1].puntualidad)})` : '—'];
+          }), { num: [1, 2, 3, 4] })}</section>
+      <section class="card"><h2>¿A qué hora llegan?</h2><p class="sub">Entradas del periodo comparadas con la hora de entrada que le tocaba ese día. Más oscuro = más personas. Los justificados no cuentan.</p>
+        ${heatTable(I.llegadas)}
+        ${I.llegadas.sucursales.length ? `<p class="sub" style="margin-top:6px">${I.llegadas.sucursales.map((s) => `<b>${esc(s.sucursal)}</b>: la mitad llega antes de las ${s.mediana_semana || '—'} entre semana${s.mediana_sabado ? ` y de las ${s.mediana_sabado} el sábado` : ''}`).join(' · ')}.</p>` : ''}</section>`);
+
+    const C2 = I.casos;
+    const H = I.honor;
+    pages.push(`<section class="card"><h2>Personas que requieren atención</h2><p class="sub">Para hablar con ellas antes de que se acumulen faltas. Se revisan las últimas ${H.quincenas} quincenas.</p>
+        ${C2.length ? table(['Empleado', 'Sucursal', 'Por qué', 'Última acción de RH'],
+          C2.map((c) => [c.nombre, c.sucursal, c.motivos.map((m) => m.texto).join(' · '), c.ultima_accion ? `${c.ultima_accion.tipo} (${fmtDate(c.ultima_accion.fecha)})` : 'Ninguna']))
+          : '<p class="empty">Nadie requiere atención especial.</p>'}</section>
+      <section class="grid2">
+        <div class="card"><h2>Cuadro de honor: puntualidad perfecta</h2><p class="sub">Sin retardos, faltas ni checadas incompletas en el periodo.</p>
+          ${H.perfectos.length ? table(['Empleado', 'Sucursal', 'Días a tiempo'], H.perfectos.map((p) => [p.nombre, p.sucursal, p.puntuales]), { num: [2] }) : '<p class="empty">Nadie con puntualidad perfecta en este periodo.</p>'}</div>
+        <div class="card"><h2>Rachas: días de trabajo seguidos a tiempo</h2><p class="sub">Hasta el último día evaluado. Descansos, festivos y justificados no la cortan.</p>
+          ${H.rachas.length ? table(['Empleado', 'Sucursal', 'Días seguidos', 'Desde'], H.rachas.map((p) => [p.nombre, p.sucursal, p.dias, fmtDate(p.desde)]), { num: [2] }) : '<p class="empty">Nadie lleva 10 días o más seguidos a tiempo.</p>'}</div>
+      </section>`);
+  }
 
   pages.push(`<section class="card"><h2>Retardos por persona</h2><p class="sub">Ordenado de más a menos retardos. "Retardos" es la cantidad de días que llegó tarde.</p>
     ${table(['Empleado', 'No.', 'Sucursal', 'Retardos', 'Min. de retardo', 'Promedio (min)', 'Mayor (min)', 'Día que más llega tarde', 'Faltas', 'Faltas por retardos', 'Justificados', '% Puntualidad'],
@@ -221,6 +340,13 @@ function buildReportHtml({ from, to, today, sucursal, result, settings, generado
   .n { text-align: right; font-variant-numeric: tabular-nums; }
   .empty { color: ${C.muted}; padding: 20px 0; text-align: center; }
   .crit { margin: 6px 0 0; padding-left: 16px; color: ${C.ink2}; line-height: 1.5; }
+  .resumen ul, .aviso ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; }
+  .resumen { border-left: 4px solid #1f3a5f; }
+  .aviso { border-left: 4px solid #d03b3b; }
+  .rojo { color: #b91c1c; }
+  .amarillo { color: #b45309; }
+  table.heat td.hm { text-align: center; font-weight: 600; border: 2px solid #fff; }
+  table.heat tr.sep td, table.heat tr.sep td.hm { border-top: 2px solid ${C.ink2}; }
 </style></head><body>${pages.map((p) => `<div class="page">${p}</div>`).join('')}</body></html>`;
 }
 
@@ -270,7 +396,13 @@ function personDayRow(d) {
   </tr>`;
 }
 
-function buildPersonasHtml({ from, to, result, generadoPor, cierres = [], autoPrint = false }) {
+function buildPersonasHtml({ from, to, result, generadoPor, cierres = [], acciones = [], autoPrint = false }) {
+  const accionesDe = new Map();
+  for (const a of acciones) {
+    const k = `${a.branch_id}|${a.emp_code}`;
+    if (!accionesDe.has(k)) accionesDe.set(k, []);
+    accionesDe.get(k).push(a);
+  }
   const byEmp = new Map();
   for (const d of result.days) {
     const k = `${d.branch_id}|${d.emp_code}`;
@@ -303,6 +435,9 @@ function buildPersonasHtml({ from, to, result, generadoPor, cierres = [], autoPr
       <div class="tiles">${tiles.map(([l, v, sub]) => `<div class="tile"><div class="tl">${esc(l)}</div><div class="tv">${esc(v)}</div>${sub ? `<div class="ts">${esc(sub)}</div>` : ''}</div>`).join('')}</div>
       <table><thead><tr><th>Fecha</th><th>Horario</th><th class="n">Entrada</th><th class="n">Comida</th><th class="n">Salida</th><th class="n">Horas</th><th>Resultado</th><th>Checadas del día y explicación</th></tr></thead>
         <tbody>${days.map(personDayRow).join('')}</tbody></table>
+      ${(accionesDe.get(`${s.branch_id}|${s.emp_code}`) || []).length ? `<h2 class="seg">Seguimiento de Recursos Humanos</h2>
+        <table><thead><tr><th>Fecha</th><th>Qué se hizo</th><th>De qué se habló o qué se acordó</th><th>Registró</th></tr></thead>
+        <tbody>${accionesDe.get(`${s.branch_id}|${s.emp_code}`).map((a) => `<tr><td class="nw">${fmtDate(a.fecha)}</td><td class="nw"><b>${esc(a.tipo)}</b></td><td>${esc(a.nota)}</td><td class="nw">${esc(a.autor)}</td></tr>`).join('')}</tbody></table>` : ''}
       <div class="firmas"><div>Firma del empleado</div><div>Revisó (Recursos Humanos)</div></div>
     </section>`;
   });
@@ -346,6 +481,7 @@ function buildPersonasHtml({ from, to, result, generadoPor, cierres = [], autoPr
   .just { margin-top: 3px; padding: 2px 5px; border-radius: 4px; font-size: 9px; }
   .just.si { background: #e0f2fe; color: #075985; }
   .just.no { background: #ffe4e6; color: #9f1239; }
+  .seg { font-size: 12px; color: #1f3a5f; margin: 12px 0 4px; }
   .firmas { display: flex; gap: 60px; margin-top: 34px; padding: 0 40px; break-inside: avoid; }
   .firmas div { flex: 1; border-top: 1px solid ${C.ink2}; padding-top: 4px; text-align: center; color: ${C.ink2}; font-size: 9.5px; }
   .empty { text-align: center; padding: 40px; color: ${C.muted}; font-size: 13px; }

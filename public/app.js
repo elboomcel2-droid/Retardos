@@ -204,6 +204,7 @@ async function loadBranches() {
 }
 
 async function loadReport() {
+  state.analisis = null; // se vuelve a preparar con los datos nuevos
   state.report = await api(`/api/report?${query()}`);
   const branchName = $('#branch').selectedOptions[0].textContent;
   $('#printHeader').innerHTML = `<h1 class="text-lg font-bold">El Boom Tractopartes · Reporte de asistencia</h1>
@@ -276,11 +277,40 @@ function stackBar(t, h = 'h-2') {
     .join('')}</div>`;
 }
 
-function stat(label, value, sub = '', cls = 'text-slate-900') {
+// Qué significa cada indicador: se muestra al pasar el mouse (o tocar) el ⓘ.
+const GLOSARIO = {
+  puntualidad: 'Entradas a tiempo ÷ (entradas a tiempo + retardos). No toma en cuenta faltas, justificados ni checadas incompletas.',
+  asistencia: '(Días que checó + días justificados) ÷ días de trabajo.',
+  retardos: 'Días en que la persona llegó después de su hora de entrada más la tolerancia.',
+  minutos_retardo: 'Suma de los minutos que llegaron tarde todos los retardos del periodo.',
+  faltas: 'Día de trabajo sin ninguna checada, siempre que el checador de la sucursal sí haya registrado a otras personas ese día.',
+  faltas_por_retardos: 'Faltas que se cuentan por juntar retardos (según la regla de Configuración, por ejemplo 3 retardos = 1 falta).',
+  justificados: 'Días con permiso, incapacidad, vacaciones u otro motivo capturado: no cuentan en contra.',
+  incompletas: 'Días en que solo checó la entrada o solo la salida.',
+  excesos_comida: 'Días en que tardó en regresar de comer más que el tiempo permitido más su tolerancia.',
+  comida_sin_checar: 'Días entre semana en que no checó la salida o el regreso de la comida.',
+  dias_extra: 'Checadas en domingo, día de descanso o festivo (vigilancia, guardias o tiempo extra).',
+  tiempo_extra: 'Días en que se quedó después de su hora de salida el tiempo configurado o más.',
+  salidas_anticipadas: 'Días en que su última checada fue antes de su hora de salida.',
+  sin_datos: 'Días en que nadie checó en la sucursal: probable falla del checador. No cuentan como falta.',
+};
+const ayuda = (k) => (GLOSARIO[k] ? ` <span class="cursor-help text-slate-400 normal-case" title="${esc(GLOSARIO[k])}" aria-label="${esc(GLOSARIO[k])}">ⓘ</span>` : '');
+
+function stat(label, value, sub = '', cls = 'text-slate-900', key = '') {
   return `<div class="card card-pad">
-    <div class="text-xs font-medium tracking-wide text-slate-500 uppercase">${label}</div>
+    <div class="text-xs font-medium tracking-wide text-slate-500 uppercase">${label}${ayuda(key)}</div>
     <div class="mt-2 text-3xl font-bold tabular-nums ${cls}">${value}</div>
-    ${sub ? `<div class="mt-1 text-xs text-slate-500">${sub}</div>` : ''}</div>`;
+    ${sub ? `<div class="mt-1 text-xs text-slate-500">${sub}</div>` : ''}
+    ${key ? `<div class="mt-1 text-xs" data-delta="${key}"></div>` : ''}</div>`;
+}
+
+// "▲ 3 pts mejor que la quincena anterior": verde si mejoró, rojo si empeoró.
+function deltaHtml(m, unidad, ref) {
+  if (!m) return '';
+  if (!m.delta) return `<span class="text-slate-500">Igual que ${esc(ref)}</span>`;
+  const n = Math.abs(m.delta);
+  return `<span class="font-semibold ${m.mejor ? 'text-emerald-700' : 'text-rose-700'}">${m.delta > 0 ? '▲' : '▼'} ${n}${unidad}</span>
+    <span class="text-slate-500">${m.delta > 0 ? 'más' : 'menos'} que ${esc(ref)} (${m.anterior}${unidad === ' pts' ? '%' : ''})</span>`;
 }
 
 function totals(list) {
@@ -319,11 +349,22 @@ function viewPanel() {
       ${pendientes ? notice('info', `<b>${pendientes}</b> día(s) con falta o checada incompleta por revisar. <button class="font-semibold underline" data-goto="detalle">Ir al detalle diario →</button>`) : ''}
     </div>
 
+    <div id="anResumen" class="mb-6"><div class="card card-pad animate-pulse text-sm text-slate-400">Preparando el resumen y la comparación con el periodo anterior…</div></div>
+
     <div class="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      ${stat('Puntualidad general', pct(T.puntualidad), `${T.puntuales} de ${T.puntuales + T.retardos} entradas a tiempo`, tone(T.puntualidad).text)}
-      ${stat('Retardos', T.retardos, `${hrs(T.minutos_retardo)} de retraso en total`, 'text-amber-600')}
-      ${stat('Faltas', T.faltas, `${T.justificados} día(s) justificados`, 'text-rose-600')}
-      ${stat('Días extra', T.dias_extra, `${hrs(T.minutos_extra)} trabajadas en domingos o festivos`, 'text-violet-600')}
+      ${stat('Puntualidad general', pct(T.puntualidad), `${T.puntuales} de ${T.puntuales + T.retardos} entradas a tiempo`, tone(T.puntualidad).text, 'puntualidad')}
+      ${stat('Retardos', T.retardos, `${T.minutos_retardo} min de retraso en total`, 'text-amber-600', 'retardos')}
+      ${stat('Faltas', T.faltas, `${T.justificados} día(s) justificados`, 'text-rose-600', 'faltas')}
+      ${stat('Minutos de retardo', T.minutos_retardo, T.retardos ? `promedio ${Math.round(T.minutos_retardo / T.retardos)} min por retardo` : 'sin retardos', 'text-amber-600', 'minutos_retardo')}
+    </div>
+
+    <div class="mb-6 grid gap-6 xl:grid-cols-[3fr_2fr]">
+      <div id="anCasos"></div>
+      <div id="anHonor"></div>
+    </div>
+    <div class="mb-6 grid gap-6 xl:grid-cols-2">
+      <div id="anTendencia"></div>
+      <div id="anLlegadas"></div>
     </div>
 
     <div class="mb-6 grid gap-4 md:grid-cols-2 2xl:grid-cols-4">
@@ -354,9 +395,9 @@ function viewPanel() {
     <div class="card mb-6 overflow-hidden">
       <div class="border-b border-slate-100 px-5 py-4"><h2 class="card-title">Comparativo entre sucursales</h2></div>
       <div class="overflow-auto"><table class="tbl">
-        <thead><tr><th>Sucursal</th><th class="num">Empleados</th><th class="w-56">Puntualidad</th><th class="num">Asistencia</th>
-          <th class="num">Retardos</th><th class="num">Faltas</th>
-          <th class="num">Checadas incompletas</th><th class="num">Se pasaron en la comida</th><th class="num">Se fueron antes</th><th class="num">Justificados</th><th class="num">Días extra</th></tr></thead>
+        <thead><tr><th>Sucursal</th><th class="num">Empleados</th><th class="w-56">Puntualidad${ayuda('puntualidad')}</th><th class="num">Asistencia${ayuda('asistencia')}</th>
+          <th class="num">Retardos${ayuda('retardos')}</th><th class="num">Faltas${ayuda('faltas')}</th>
+          <th class="num">Checadas incompletas${ayuda('incompletas')}</th><th class="num">Se pasaron en la comida${ayuda('excesos_comida')}</th><th class="num">Se fueron antes${ayuda('salidas_anticipadas')}</th><th class="num">Justificados${ayuda('justificados')}</th><th class="num">Días extra${ayuda('dias_extra')}</th></tr></thead>
         <tbody>${r.branches.map((b) => `<tr>
           <td class="font-medium text-slate-900">${esc(b.sucursal)}</td><td class="num">${b.empleados}</td>
           <td><div class="flex items-center gap-2"><div class="h-1.5 flex-1 rounded-full bg-slate-100"><div class="h-1.5 rounded-full ${b.puntualidad >= 90 ? 'bg-emerald-500' : b.puntualidad >= 75 ? 'bg-amber-400' : 'bg-rose-500'}" style="width:${b.puntualidad ?? 0}%"></div></div>
@@ -385,6 +426,202 @@ function viewPanel() {
     await go('empleados');
   }));
   bindLinks($('#view'));
+  loadAnalisis();
+}
+
+// ---------------------------------------------------------------- Lectura para RH
+// Resumen, comparación, casos de atención, cuadro de honor, tendencia y horas de
+// llegada. Tarda un poco más que el reporte (revisa varias quincenas), así que
+// el panel se muestra primero y esto se llena cuando llega.
+state.analisis = null;
+state.anKey = '';
+state.anMetrica = 'puntualidad';
+state.casosTodos = false;
+
+async function loadAnalisis() {
+  const key = query();
+  if (state.anKey !== key || !state.analisis) {
+    state.anKey = key;
+    state.analisis = null;
+    let a;
+    try {
+      a = await api(`/api/analisis?${key}`);
+    } catch (e) {
+      if (state.anKey === key && $('#anResumen')) $('#anResumen').innerHTML = notice('warn', `No se pudo preparar el resumen: ${esc(e.message)}`);
+      return;
+    }
+    if (state.anKey !== key) return; // cambiaron el periodo mientras tanto
+    state.analisis = a;
+  }
+  if (state.view === 'panel' && $('#anResumen')) renderAnalisis(state.analisis);
+}
+
+const NIVEL = {
+  verde: ['bg-emerald-500', 'Al día', 'text-emerald-800'],
+  amarillo: ['bg-amber-400', 'Revisar', 'text-amber-800'],
+  rojo: ['bg-rose-500', 'No confiable', 'text-rose-800'],
+};
+
+function renderAnalisis(I) {
+  const ref = I.comparativo?.texto || 'el periodo anterior';
+  const M = I.comparativo?.metricas;
+  for (const el of $$('[data-delta]')) {
+    const k = el.dataset.delta;
+    el.innerHTML = M ? deltaHtml(M[k], k === 'puntualidad' ? ' pts' : k === 'minutos_retardo' ? ' min' : '', ref) : '';
+  }
+
+  $('#anResumen').innerHTML = `<div class="card overflow-hidden">
+    <div class="grid gap-0 lg:grid-cols-[3fr_2fr]">
+      <div class="border-b border-slate-100 p-5 lg:border-r lg:border-b-0">
+        <h2 class="card-title mb-2">En pocas palabras</h2>
+        <ul class="list-disc space-y-1 pl-5 text-sm text-slate-700">${I.resumen.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
+        ${I.comparativo ? `<p class="mt-3 text-xs text-slate-500">Comparado con ${esc(ref)} (${fmtDate(I.comparativo.desde)} al ${fmtDate(I.comparativo.hasta)})${I.comparativo.parcial ? ': el periodo aún no termina, así que se comparan los mismos días' : ''}.</p>` : ''}
+      </div>
+      <div class="p-5">
+        <h2 class="card-title mb-2">¿Qué tan confiables son estos datos?</h2>
+        <ul class="space-y-2">${I.calidad.map((q) => `<li class="flex items-start gap-2 text-sm">
+          <span class="mt-1.5 size-2.5 shrink-0 rounded-full ${NIVEL[q.nivel][0]}" aria-hidden="true"></span>
+          <div><b class="text-slate-900">${esc(q.sucursal)}</b> <span class="text-xs font-semibold ${NIVEL[q.nivel][2]}">${NIVEL[q.nivel][1]}</span>
+            <div class="text-xs text-slate-500">${q.motivos.length ? esc(q.motivos.join(' · ')) : `Checadas al día${q.ultima_checada ? ` (última: ${fmtDate(q.ultima_checada)})` : ''}`}</div></div></li>`).join('')}</ul>
+      </div>
+    </div></div>`;
+
+  // Casos de atención
+  const TIPO = {
+    reincidente: 'bg-rose-100 text-rose-800', empeoro: 'bg-rose-100 text-rose-800', cerca_falta: 'bg-amber-100 text-amber-900',
+    patron_dia: 'bg-sky-100 text-sky-800', patron_comida: 'bg-sky-100 text-sky-800', patron_salida: 'bg-sky-100 text-sky-800',
+  };
+  const casos = state.casosTodos ? I.casos : I.casos.slice(0, 8);
+  $('#anCasos').innerHTML = `<div class="card h-full overflow-hidden">
+    <div class="border-b border-slate-100 px-5 py-4"><h2 class="card-title">Requieren atención (${I.casos.length})</h2>
+      <p class="text-xs text-slate-500">Para hablar con ellas antes de que se acumulen faltas. Toque a la persona para ver sus días y registrar la plática o el acta.</p></div>
+    ${casos.length ? `<ul class="divide-y divide-slate-100">${casos.map((c) => `<li class="row-link px-5 py-3" data-emp="${c.branch_id}|${esc(c.emp_code)}">
+        <div class="flex flex-wrap items-center justify-between gap-2"><div class="min-w-0"><span class="font-medium text-slate-900">${esc(c.nombre)}</span>${c.nombre_incompleto ? completarLink(c.branch_id, c.emp_code) : ''}
+          <span class="text-xs text-slate-500">· ${esc(c.sucursal)}</span></div>
+          <span class="text-xs ${c.ultima_accion ? 'text-emerald-700' : 'text-slate-400'}">${c.ultima_accion ? `${esc(c.ultima_accion.tipo)} el ${fmtDate(c.ultima_accion.fecha)}` : 'Sin seguimiento registrado'}</span></div>
+        <div class="mt-1.5 flex flex-wrap gap-1">${c.motivos.map((m) => `<span class="rounded-md px-2 py-0.5 text-[11px] font-medium ${TIPO[m.tipo] || 'bg-slate-100 text-slate-700'}">${esc(m.texto)}</span>`).join('')}</div></li>`).join('')}</ul>
+      ${I.casos.length > 8 ? `<div class="border-t border-slate-100 px-5 py-2 text-center"><button class="btn btn-ghost btn-sm" id="casosTodos">${state.casosTodos ? 'Ver menos' : `Ver los ${I.casos.length}`}</button></div>` : ''}`
+      : '<p class="px-5 py-8 text-center text-sm text-slate-500">Nadie requiere atención especial 🎉</p>'}
+  </div>`;
+  $('#casosTodos')?.addEventListener('click', () => {
+    state.casosTodos = !state.casosTodos;
+    renderAnalisis(I);
+  });
+
+  // Cuadro de honor
+  const H = I.honor;
+  const persona = (p, val, sub) => `<li class="row-link flex items-center gap-3 px-5 py-2" data-emp="${p.branch_id}|${esc(p.emp_code)}">
+    <span class="grid size-8 shrink-0 place-items-center rounded-full bg-emerald-50 text-xs font-bold text-emerald-700">${esc(initials(p.nombre))}</span>
+    <div class="min-w-0 flex-1"><div class="text-sm font-medium break-words text-slate-900">${esc(p.nombre)}</div><div class="text-xs text-slate-500">${esc(p.sucursal)}${sub ? ` · ${sub}` : ''}</div></div>
+    <span class="shrink-0 rounded-full bg-emerald-100 px-2 py-0.5 text-sm font-bold text-emerald-800">${val}</span></li>`;
+  $('#anHonor').innerHTML = `<div class="card h-full overflow-hidden">
+    <div class="border-b border-slate-100 px-5 py-4"><h2 class="card-title">Cuadro de honor</h2>
+      <p class="text-xs text-slate-500">Para reconocer a quien llega a tiempo.</p></div>
+    <div class="px-5 pt-3 text-xs font-semibold tracking-wide text-slate-500 uppercase">Puntualidad perfecta en el periodo (${H.perfectos.length})</div>
+    ${H.perfectos.length ? `<ul class="max-h-64 overflow-auto">${H.perfectos.map((p) => persona(p, `${p.puntuales} días`)).join('')}</ul>`
+      : '<p class="px-5 py-3 text-sm text-slate-500">Nadie sin retardos, faltas ni checadas incompletas en este periodo.</p>'}
+    <div class="px-5 pt-3 text-xs font-semibold tracking-wide text-slate-500 uppercase">Rachas: días de trabajo seguidos a tiempo</div>
+    ${H.rachas.length ? `<ul class="pb-2">${H.rachas.map((p) => persona(p, p.dias, `desde el ${fmtDate(p.desde)}`)).join('')}</ul>`
+      : '<p class="px-5 py-3 pb-5 text-sm text-slate-500">Nadie lleva 10 días o más seguidos a tiempo.</p>'}
+    <p class="px-5 pb-4 text-[11px] text-slate-400">Las rachas revisan las últimas ${H.quincenas} quincenas; descansos, festivos y justificados no las cortan.</p>
+  </div>`;
+
+  renderTendencia(I);
+  renderLlegadas(I.llegadas);
+  for (const id of ['#anResumen', '#anCasos', '#anHonor']) bindLinks($(id));
+}
+
+// Colores fijos por sucursal (paleta categórica validada): el color sigue a la
+// sucursal aunque se filtre, nunca a su lugar en el ranking.
+const SLOTS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'];
+const METRICAS_TEND = [
+  ['puntualidad', 'Puntualidad', '%', 100],
+  ['retardos', 'Retardos', '', null],
+  ['minutos_retardo', 'Minutos de retardo', ' min', null],
+  ['faltas', 'Faltas', '', null],
+];
+
+function lineChart(cats, series, { max, unit = '' } = {}) {
+  const W = 640, H = 260, left = 44, right = 150, top = 14, bottom = 30;
+  const pw = W - left - right, ph = H - top - bottom;
+  const vals = series.flatMap((s) => s.values.filter((v) => v != null));
+  if (!vals.length) return '<p class="py-10 text-center text-sm text-slate-500">Sin datos en estas quincenas.</p>';
+  const nice = (v) => { if (v <= 5) return 5; const p = 10 ** Math.floor(Math.log10(v)); const n = v / p; return (n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; };
+  const ymax = max ?? nice(Math.max(...vals, 1));
+  const x = (i) => left + (cats.length === 1 ? pw / 2 : (i / (cats.length - 1)) * pw);
+  const y = (v) => top + ph - (v / ymax) * ph;
+  const grid = [0, 0.25, 0.5, 0.75, 1].map((t) => Math.round(ymax * t)).map((t) => `<line x1="${left}" x2="${left + pw}" y1="${y(t)}" y2="${y(t)}" stroke="${t ? '#e1e0d9' : '#c3c2b7'}"/>
+    <text x="${left - 6}" y="${y(t) + 4}" text-anchor="end" font-size="11" fill="#898781">${t}${unit.trim() === '%' ? '%' : ''}</text>`).join('');
+  const xl = cats.map((c, i) => `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="11" fill="#898781">${esc(c)}</text>`).join('');
+  const ends = series.map((s) => {
+    const i = s.values.map((v, j) => (v == null ? -1 : j)).filter((j) => j >= 0).pop();
+    return i == null ? null : { s, i, y: y(s.values[i]) };
+  }).filter(Boolean).sort((a, b) => a.y - b.y);
+  for (let k = 1; k < ends.length; k++) if (ends[k].y - ends[k - 1].y < 14) ends[k].y = ends[k - 1].y + 14;
+  const marks = series.map((s) => {
+    let d = '';
+    s.values.forEach((v, i) => { if (v != null) d += `${d && s.values[i - 1] != null ? 'L' : 'M'}${x(i)},${y(v)}`; });
+    return `<path d="${d}" fill="none" stroke="${s.color}" stroke-width="2" stroke-linejoin="round"/>` +
+      s.values.map((v, i) => (v == null ? '' : `<circle cx="${x(i)}" cy="${y(v)}" r="4" fill="${s.color}" stroke="#fff" stroke-width="2"/>`)).join('');
+  }).join('');
+  // Zona de hover por quincena (más ancha que los puntos): muestra todas las sucursales.
+  const hover = cats.map((c, i) => {
+    const w = cats.length > 1 ? pw / (cats.length - 1) : pw;
+    const txt = `${c}\n${series.map((s) => `${s.name}: ${s.values[i] ?? '—'}${s.values[i] != null ? unit : ''}`).join('\n')}`;
+    return `<rect x="${x(i) - w / 2}" y="${top}" width="${w}" height="${ph}" fill="transparent" class="hover:fill-slate-900/5"><title>${esc(txt)}</title></rect>`;
+  }).join('');
+  const tags = ends.map((e) => `<text x="${x(e.i) + 9}" y="${e.y + 4}" font-size="11" fill="#52514e">${esc(e.s.short)} <tspan font-weight="600" fill="#0b0b0b">${e.s.values[e.i]}${unit}</tspan></text>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" class="w-full" role="img" aria-label="Tendencia por quincena">${grid}${xl}${marks}${hover}${tags}</svg>`;
+}
+
+function renderTendencia(I) {
+  const T = I.tendencia;
+  const [key, label, unit, max] = METRICAS_TEND.find(([k]) => k === state.anMetrica);
+  const suc = new Map();
+  T.forEach((q, i) => q.sucursales.forEach((s) => {
+    if (!suc.has(s.branch_id)) suc.set(s.branch_id, { name: s.sucursal, short: s.sucursal.slice(3), color: SLOTS[s.slot % SLOTS.length], values: T.map(() => null) });
+    suc.get(s.branch_id).values[i] = s[key];
+  }));
+  const series = [...suc.values()];
+  $('#anTendencia').innerHTML = `<div class="card h-full overflow-hidden">
+    <div class="flex flex-wrap items-start justify-between gap-2 border-b border-slate-100 px-5 py-4">
+      <div><h2 class="card-title">Tendencia de las últimas ${T.length} quincenas</h2><p class="text-xs text-slate-500">¿Va mejorando o empeorando? Pase el mouse para ver las cifras.</p></div>
+      <div class="flex flex-wrap gap-1">${METRICAS_TEND.map(([k, l]) => `<button class="chip ${k === key ? 'on' : ''}" data-metrica="${k}">${l}</button>`).join('')}</div>
+    </div>
+    <div class="px-3 pt-3"><div class="mb-1 flex flex-wrap gap-x-4 gap-y-1 px-2 text-xs text-slate-600">${series.map((s) => `<span class="inline-flex items-center gap-1.5"><span class="size-2.5 rounded-sm" style="background:${s.color}"></span>${esc(s.name)}</span>`).join('')}</div>
+      ${lineChart(T.map((q) => q.etiqueta), series, { max, unit })}</div>
+    <details class="border-t border-slate-100 px-5 py-3 text-sm"><summary class="cursor-pointer text-xs font-medium text-slate-600">Ver la tabla de ${esc(label.toLowerCase())}</summary>
+      <div class="mt-2 overflow-auto"><table class="tbl"><thead><tr><th>Quincena</th>${series.map((s) => `<th class="num">${esc(s.short)}</th>`).join('')}<th class="num">Total</th></tr></thead>
+      <tbody>${T.map((q, i) => `<tr><td>${esc(q.etiqueta)}</td>${series.map((s) => `<td class="num">${s.values[i] ?? '—'}</td>`).join('')}<td class="num font-semibold">${q.total[key] ?? '—'}</td></tr>`).join('')}</tbody></table></div></details>
+  </div>`;
+  $$('[data-metrica]').forEach((b) => b.addEventListener('click', () => {
+    state.anMetrica = b.dataset.metrica;
+    renderTendencia(I);
+  }));
+}
+
+// Mapa de calor: una sola tonalidad, más oscuro = más personas.
+const AZULES = ['#dbeafe', '#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281'];
+function renderLlegadas(L) {
+  const cell = (v, fila, dia) => {
+    const tip = `${dia}: ${v} entrada(s) · ${fila.rango}`;
+    if (!v) return `<td class="border-2 border-white bg-slate-50 text-center text-xs text-slate-300" title="${esc(tip)}">0</td>`;
+    const i = Math.min(AZULES.length - 1, Math.floor((v / L.max) * AZULES.length - 0.0001));
+    return `<td class="border-2 border-white text-center text-xs font-semibold ${i >= 3 ? 'text-white' : 'text-slate-900'}" style="background:${AZULES[i]}" title="${esc(tip)}">${v}</td>`;
+  };
+  const primeraTarde = L.filas.findIndex((f) => f.tarde);
+  $('#anLlegadas').innerHTML = `<div class="card h-full overflow-hidden">
+    <div class="border-b border-slate-100 px-5 py-4"><h2 class="card-title">¿A qué hora llegan?</h2>
+      <p class="text-xs text-slate-500">Cada entrada del periodo comparada con la hora que le tocaba ese día. Más oscuro = más personas. Sirve para ver si el problema es de algunas personas o si el horario no corresponde con la realidad de la sucursal.</p></div>
+    ${L.total ? `<div class="overflow-auto px-3 py-3"><table class="w-full text-sm"><thead><tr><th class="px-2 py-1 text-left text-[11px] font-semibold text-slate-500 uppercase">Llegada</th>
+        ${L.dias.map((d) => `<th class="px-1 py-1 text-center text-[11px] font-semibold text-slate-500 uppercase">${esc(d.slice(0, 3))}</th>`).join('')}<th class="px-2 py-1 text-right text-[11px] font-semibold text-slate-500 uppercase">Total</th></tr></thead>
+      <tbody>${L.filas.map((f, i) => `<tr class="${i === primeraTarde ? 'border-t-2 border-slate-400' : ''}"><td class="px-2 py-1.5 text-xs ${f.tarde ? 'text-amber-800' : 'text-slate-700'}">${esc(f.rango)}</td>
+        ${f.valores.map((v, j) => cell(v, f, L.dias[j])).join('')}<td class="px-2 text-right text-xs font-semibold tabular-nums">${f.total}</td></tr>`).join('')}</tbody></table>
+      <p class="mt-1 px-2 text-[11px] text-slate-500">Debajo de la línea: retardos. ${L.total} entradas; los justificados no cuentan.</p></div>
+    <ul class="space-y-1 border-t border-slate-100 px-5 py-3 text-xs text-slate-600">${L.sucursales.map((s) => `<li><b class="text-slate-800">${esc(s.sucursal)}</b>: la mitad llega antes de las <b>${s.mediana_semana || '—'}</b> entre semana${s.mediana_sabado ? ` y de las <b>${s.mediana_sabado}</b> el sábado` : ''}
+      <span class="text-slate-400">(${s.mediana_minutos > 0 ? `${s.mediana_minutos} min después` : s.mediana_minutos < 0 ? `${-s.mediana_minutos} min antes` : 'justo a la hora'} de su entrada)</span></li>`).join('')}</ul>`
+    : '<p class="px-5 py-8 text-center text-sm text-slate-500">Sin entradas que evaluar en el periodo.</p>'}
+  </div>`;
 }
 
 function ausentesNotice(r) {
@@ -885,12 +1122,12 @@ function viewDetalle() {
 function employeeTiles(s, days) {
   const trabajados = days.reduce((n, d) => n + (d.minutos || 0), 0);
   return `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-    ${[['Puntualidad', pct(s.puntualidad), tone(s.puntualidad).text], ['Retardos', s.retardos, 'text-amber-600', `${s.minutos_retardo} min`], ['Faltas', s.faltas, 'text-rose-600'],
-       ['Faltas por retardos', s.faltas_por_retardos ?? 0, 'text-rose-600'], ['Checadas incompletas', s.incompletos + s.sin_salida, 'text-orange-600'],
-       ['Se pasó en la comida', s.excesos_comida, 'text-rose-600', s.minutos_exceso_comida ? `${s.minutos_exceso_comida} min de más` : ''], ['No checó comida', s.comida_sin_checar, 'text-orange-600'],
-       ['Justificados', s.justificados, 'text-sky-600'], ['Días extra', s.dias_extra, 'text-violet-600', s.minutos_extra ? hrs(s.minutos_extra) : ''],
+    ${[['Puntualidad', pct(s.puntualidad), tone(s.puntualidad).text, '', 'puntualidad'], ['Retardos', s.retardos, 'text-amber-600', `${s.minutos_retardo} min`, 'retardos'], ['Faltas', s.faltas, 'text-rose-600', '', 'faltas'],
+       ['Faltas por retardos', s.faltas_por_retardos ?? 0, 'text-rose-600', '', 'faltas_por_retardos'], ['Checadas incompletas', s.incompletos + s.sin_salida, 'text-orange-600', '', 'incompletas'],
+       ['Se pasó en la comida', s.excesos_comida, 'text-rose-600', s.minutos_exceso_comida ? `${s.minutos_exceso_comida} min de más` : '', 'excesos_comida'], ['No checó comida', s.comida_sin_checar, 'text-orange-600', '', 'comida_sin_checar'],
+       ['Justificados', s.justificados, 'text-sky-600', '', 'justificados'], ['Días extra', s.dias_extra, 'text-violet-600', s.minutos_extra ? hrs(s.minutos_extra) : '', 'dias_extra'],
        ['Horas trabajadas', hrs(trabajados), 'text-slate-900', 'sin contar comida']]
-      .map(([l, v, c, sub]) => `<div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] text-slate-500">${l}</div>
+      .map(([l, v, c, sub, k]) => `<div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] text-slate-500">${l}${k ? ayuda(k) : ''}</div>
         <div class="text-xl font-bold tabular-nums ${c}">${v}</div>${sub ? `<div class="text-[11px] text-slate-500">${sub}</div>` : ''}</div>`).join('')}
   </div>`;
 }
@@ -937,9 +1174,78 @@ function showEmployee(branchId, code) {
       ${employeeTiles(s, days)}
       <div>${stackBar(s, 'h-2.5')}</div>
       ${vinculosBox(s)}
+      <div id="segBox"></div>
       ${dayTable(days)}
     </div>`);
   bindLinks($('#drawerBody'));
+  loadSeguimiento(branchId, code);
+}
+
+// ---------------------------------------------------------------- Seguimiento de RH
+// Pláticas, actas y compromisos con la persona, y cómo le fue después:
+// retardos y faltas en los 30 días antes y en los 30 días después.
+async function loadSeguimiento(branchId, code) {
+  const box = $('#segBox');
+  if (!box) return;
+  let data;
+  try {
+    data = await api(`/api/acciones?emp=${encodeURIComponent(`${branchId}|${code}`)}`);
+  } catch (e) {
+    box.innerHTML = notice('warn', `No se pudo cargar el seguimiento: ${esc(e.message)}`);
+    return;
+  }
+  if (!$('#segBox')) return;
+  const puedo = puede('seguimiento');
+  if (!data.items.length && !puedo) return (box.innerHTML = '');
+  const periodo = (x) => (x ? `${x.retardos} retardo(s) · ${x.minutos_retardo} min · ${x.faltas} falta(s)` : '—');
+  const efecto = (a) => {
+    if (!a.despues) return '<span class="text-slate-400">Todavía no hay días después para comparar.</span>';
+    const antes = a.antes ? a.antes.retardos + a.antes.faltas : null;
+    const desp = a.despues.retardos + a.despues.faltas;
+    const v = antes == null ? '' : desp < antes ? '<b class="text-emerald-700">Mejoró</b>' : desp > antes ? '<b class="text-rose-700">Empeoró</b>' : '<b class="text-slate-600">Sigue igual</b>';
+    return `${v} <span class="text-slate-500">Antes (30 días): ${periodo(a.antes)} → Después${a.despues.hasta < addDaysIso(a.fecha, 30) ? ` (${a.despues.dias} días de trabajo hasta ahora)` : ' (30 días)'}: ${periodo(a.despues)}</span>`;
+  };
+  box.innerHTML = `<div class="rounded-xl border border-slate-200 bg-white px-4 py-3">
+    <div class="mb-2 flex items-center justify-between gap-2"><h3 class="text-sm font-semibold text-slate-900">Seguimiento de Recursos Humanos</h3>
+      ${puedo ? '<button class="btn btn-secondary btn-sm" id="segNuevo">Registrar plática, acta o compromiso</button>' : ''}</div>
+    <div id="segForm"></div>
+    ${data.items.length ? `<ul class="divide-y divide-slate-100">${data.items.map((a) => `<li class="py-2 text-sm">
+        <div class="flex flex-wrap items-start justify-between gap-2"><div><b class="text-slate-900">${esc(a.tipo)}</b> · ${fmtDate(a.fecha)}
+          <span class="text-xs text-slate-500">— ${esc(a.autor)}</span></div>
+          ${puedo ? `<button class="text-xs text-rose-700 underline" data-seg-del="${a.id}">Borrar</button>` : ''}</div>
+        <div class="text-slate-700">${esc(a.nota)}</div>
+        <div class="mt-1 text-xs">${efecto(a)}</div></li>`).join('')}</ul>`
+      : '<p class="text-xs text-slate-500">Aún no se ha registrado ninguna plática, acta ni compromiso con esta persona. Registrarlas permite ver después si mejoró y sirve de respaldo.</p>'}
+  </div>`;
+  $('#segNuevo')?.addEventListener('click', () => {
+    $('#segForm').innerHTML = `<div class="mb-3 grid gap-3 rounded-lg bg-slate-50 p-3 sm:grid-cols-[150px_1fr]">
+      <label class="field">Fecha<input type="date" id="segFecha" class="input" value="${iso(new Date())}" max="${iso(new Date())}"></label>
+      <label class="field">Qué se hizo<select id="segTipo" class="input">${data.tipos.map((t) => `<option>${esc(t)}</option>`).join('')}</select></label>
+      <label class="field sm:col-span-2">De qué se habló o qué se acordó<input id="segNota" class="input" maxlength="500" placeholder="Ej. Se habló de sus retardos de los lunes; se comprometió a llegar 8:25"></label>
+      <div class="flex justify-end gap-2 sm:col-span-2"><button class="btn btn-secondary btn-sm" id="segCancel">Cancelar</button><button class="btn btn-primary btn-sm" id="segSave">Guardar</button></div>
+      <p class="text-xs text-slate-500 sm:col-span-2">Quedará registrado a nombre de <b>${esc(usuario())}</b> en el historial.</p></div>`;
+    $('#segNota').focus();
+    $('#segCancel').addEventListener('click', () => ($('#segForm').innerHTML = ''));
+    $('#segSave').addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
+      await api('/api/acciones', { method: 'POST', body: { branch_id: branchId, emp_code: code, fecha: $('#segFecha').value, tipo: $('#segTipo').value, nota: $('#segNota').value } });
+      toast('Seguimiento registrado');
+      state.analisis = null;
+      await loadSeguimiento(branchId, code);
+    }));
+  });
+  $$('[data-seg-del]', box).forEach((b) => b.addEventListener('click', () => busy(b, async () => {
+    if (!confirm('¿Borrar este registro de seguimiento?')) return;
+    await api(`/api/acciones/${b.dataset.segDel}`, { method: 'DELETE' });
+    toast('Registro borrado');
+    state.analisis = null;
+    await loadSeguimiento(branchId, code);
+  })));
+}
+
+function addDaysIso(isoDate, n) {
+  const d = new Date(`${isoDate}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 // Elegir otro número (de otra sucursal) que es la misma persona.
@@ -1475,7 +1781,7 @@ ORDER BY iclock_transaction.punch_time ASC;</pre></details>
       </div>
     </details>`}`;
 
-  const formData = (root) => Object.fromEntries($('input, select', root).filter((i) => i.name).map((i) => [i.name, i.type === 'checkbox' ? i.checked : i.value]));
+  const formData = (root) => Object.fromEntries($$('input, select', root).filter((i) => i.name).map((i) => [i.name, i.type === 'checkbox' ? i.checked : i.value]));
   $('#saveSmtp')?.addEventListener('click', (ev) => busy(ev.currentTarget, async () => {
     await api('/api/settings', { method: 'PUT', body: formData($('#smtpForm')) });
     toast('Servidor de correo guardado');
@@ -1676,6 +1982,10 @@ function describeAudit(r, names, branches) {
       if (d.justificado === false) return `Anotó como <b>no justificado</b> el día ${fmtDate(d.fecha)} de <b>${esc(who(d.branch_id, d.emp_code))}</b> (${esc(suc(d.branch_id))}): ${esc(d.nota)}`;
       if (d.dias > 1) return `Justificó ${d.dias} días desde el ${fmtDate(d.fecha)} hasta el ${fmtDate(d.hasta)} de <b>${esc(who(d.branch_id, d.emp_code))}</b> como <b>${esc(d.tipo)}</b>: ${esc(d.nota)}`;
       return `Justificó el día ${fmtDate(d.fecha)} de <b>${esc(who(d.branch_id, d.emp_code))}</b> (${esc(suc(d.branch_id))}) como <b>${esc(d.tipo)}</b>: ${esc(d.nota)}`;
+    case 'Seguimiento registrado':
+      return `Registró <b>${esc(d.tipo)}</b> del ${fmtDate(d.fecha)} con <b>${esc(who(d.branch_id, d.emp_code))}</b> (${esc(suc(d.branch_id))}): ${esc(d.nota)}`;
+    case 'Seguimiento eliminado':
+      return `Borró el seguimiento (${esc(d.tipo)} del ${fmtDate(d.fecha)}) de <b>${esc(who(d.branch_id, d.emp_code))}</b>`;
     case 'Justificación eliminada':
       return `Quitó la justificación del día ${fmtDate(d.fecha)} de <b>${esc(who(d.branch_id, d.emp_code))}</b> (${esc(d.tipo)})`;
     case 'Sincronización':
@@ -1756,6 +2066,7 @@ function describeAudit(r, names, branches) {
       if (d.rol) c.push(`acceso a <b>${esc(rolNombre(d.rol))}</b>`);
       if (d.activo === false) c.push('<b>lo desactivó</b>');
       if (d.activo === true) c.push('<b>lo volvió a activar</b>');
+      if (d.branch_id !== undefined) c.push(`abre con <b>${esc(d.branch_id ? branches[d.branch_id] || 'otra sucursal' : 'todas las sucursales')}</b>`);
       return `Cambió al usuario <b>${esc(d.login)}</b>${c.length ? `: ${c.join(', ')}` : ''}`;
     }
     default:
@@ -1804,6 +2115,8 @@ async function viewBitacora() {
 async function viewUsuarios() {
   const users = await api('/api/usuarios');
   const rolOptions = (sel) => Object.entries(state.roles).map(([k, r]) => `<option value="${k}" ${k === sel ? 'selected' : ''}>${esc(r.nombre)}</option>`).join('');
+  // Sucursal con la que abre el sistema (útil para gerentes); no limita lo que puede ver.
+  const sucOptions = (sel) => `<option value="">Todas</option>${state.branches.map((b) => `<option value="${b.id}" ${b.id === sel ? 'selected' : ''}>${esc(b.code)} ${esc(b.name)}</option>`).join('')}`;
   const roles = Object.entries(state.roles);
   const matriz = `<details class="card mb-6" open><summary class="cursor-pointer px-5 py-4 text-base font-semibold text-slate-900">Qué puede hacer cada tipo de acceso</summary>
     <div class="overflow-auto border-t border-slate-100"><table class="tbl"><thead><tr><th></th>${roles.map(([, r]) => `<th class="text-center">${esc(r.nombre)}</th>`).join('')}</tr></thead>
@@ -1813,18 +2126,20 @@ async function viewUsuarios() {
     ${pageHeader('Usuarios', 'Quién puede entrar al sistema y qué puede hacer. Cada acción queda en el Historial con el nombre de la persona.')}
     ${matriz}
     ${section('Dar acceso a una persona', `La persona entra con una <b>contraseña temporal</b> y el sistema le pide cambiarla la primera vez. Tipos de acceso: ${Object.values(state.roles).map((r) => `<b>${esc(r.nombre)}</b> (${esc(r.desc.toLowerCase())})`).join('; ')}.`,
-      `<form id="uNew" class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr_auto]">
+      `<form id="uNew" class="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-[1.5fr_1fr_1fr_1fr_1fr_auto]">
         <label class="field">Nombre completo<input class="input" name="nombre" placeholder="Ej. Serene Delgado Lopez" required></label>
         <label class="field">Usuario para entrar<input class="input" name="login" placeholder="Ej. Serene_del" autocomplete="off" autocapitalize="none" required></label>
         <label class="field">Tipo de acceso<select class="input" name="rol">${rolOptions('rh')}</select></label>
+        <label class="field" title="Para gerentes: el sistema abre mostrando su sucursal; la puede cambiar">Abre con la sucursal<select class="input" name="branch_id">${sucOptions(null)}</select></label>
         <label class="field">Contraseña temporal (8 o más, letras y números)<input class="input" name="password" type="text" autocomplete="off" minlength="8" maxlength="100" required></label>
         <button class="btn btn-primary">Dar acceso</button></form>`)}
-    <div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl tbl-stack"><thead><tr><th>Nombre</th><th>Usuario</th><th>Tipo de acceso</th><th>Activo</th><th>Última entrada</th><th></th></tr></thead><tbody>
+    <div class="card overflow-hidden"><div class="overflow-auto"><table class="tbl tbl-stack"><thead><tr><th>Nombre</th><th>Usuario</th><th>Tipo de acceso</th><th title="El sistema abre mostrando esta sucursal; la persona la puede cambiar">Abre con</th><th>Activo</th><th>Última entrada</th><th></th></tr></thead><tbody>
     ${users.map((u) => `<tr data-user="${u.id}">
       <td class="min-w-56"><input class="input px-2 py-1 font-medium" name="nombre" value="${esc(u.nombre)}">
         ${u.cambiar_clave ? '<div class="mt-1 text-xs text-amber-700">Tiene contraseña temporal (aún no la cambia)</div>' : ''}</td>
       <td data-label="Usuario" class="font-mono text-xs whitespace-nowrap">${esc(u.login)}${u.id === state.me.id ? ' <span class="font-sans text-brand-700">(usted)</span>' : ''}</td>
       <td data-label="Acceso"><select class="input px-2 py-1 max-sm:w-auto" name="rol">${rolOptions(u.rol)}</select></td>
+      <td data-label="Abre con"><select class="input px-2 py-1 max-sm:w-auto" name="branch_id">${sucOptions(u.branch_id)}</select></td>
       <td data-label="Activo" class="text-center"><input type="checkbox" class="checkbox" name="activo" ${u.activo ? 'checked' : ''} aria-label="Activo"></td>
       <td data-label="Última entrada" class="whitespace-nowrap tabular-nums text-slate-500">${u.ultimo_acceso ? `${fmtDate(u.ultimo_acceso.slice(0, 10))} ${u.ultimo_acceso.slice(11, 16)}` : 'Nunca'}</td>
       <td class="whitespace-nowrap"><button class="btn btn-primary btn-sm" data-u-save>Guardar</button>
@@ -1848,6 +2163,7 @@ async function viewUsuarios() {
         nombre: $('[name=nombre]', tr).value,
         rol: $('[name=rol]', tr).value,
         activo: $('[name=activo]', tr).checked,
+        branch_id: $('[name=branch_id]', tr).value,
       } });
       toast('Usuario guardado');
       await viewUsuarios();
@@ -2148,11 +2464,18 @@ async function start(me) {
   }
   try {
     await loadBranches();
+    sucursalInicial();
     await loadPendientes();
   } catch (e) {
     toast(e.message, 'error');
   }
   await refresh();
+}
+
+// Quien tiene una sucursal asignada (gerentes) entra viendo la suya; puede cambiarla.
+function sucursalInicial() {
+  const id = state.me?.branch_id;
+  if (id && [...$('#branch').options].some((o) => o.value === String(id))) $('#branch').value = String(id);
 }
 
 async function boot() {
@@ -2210,6 +2533,7 @@ async function init() {
   if (VIEWS[fromHash]) state.view = fromHash;
   try {
     await loadBranches();
+    sucursalInicial();
     await loadPendientes();
   } catch (e) {
     toast(e.message, 'error');

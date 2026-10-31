@@ -138,7 +138,69 @@ function analyze(result, { from, to, today, settings = {} }) {
     dias: fechasCal.map((f) => byKey.get(`${e.branch_id}|${e.emp_code}|${f}`) || null),
   }));
 
-  return { kpis, sucursales, fechas, diasSemana, rangos: porRango, personas, topRetardos, topFaltas, calendario, fechasCal };
+  return { kpis, sucursales, fechas, diasSemana, rangos: porRango, personas, topRetardos, topFaltas, calendario, fechasCal, llegadas: llegadas(days) };
+}
+
+// ¿A qué hora llega realmente la gente? Cada entrada se compara con su hora de
+// entrada de ese día (sábado 9:00, entre semana 8:30) y se agrupa por día de la
+// semana. Los justificados no cuentan: tenían permiso.
+const LLEGADAS = [
+  ['Más de 15 min antes', false],
+  ['De 1 a 15 min antes', false],
+  ['A tiempo (hora exacta o en la tolerancia)', false],
+  ['Tarde: hasta 10 min después de la tolerancia', true],
+  ['Tarde: de 11 a 30 min después de la tolerancia', true],
+  ['Tarde: más de 30 min después de la tolerancia', true],
+];
+const toMin = (t) => {
+  const [h, m, s] = t.split(':').map(Number);
+  return h * 60 + m + (s || 0) / 60;
+};
+const hhmm = (min) => `${Math.floor(min / 60)}:${String(Math.round(min % 60)).padStart(2, '0')}`;
+const mediana = (l) => {
+  if (!l.length) return null;
+  const s = [...l].sort((a, b) => a - b);
+  const i = Math.floor(s.length / 2);
+  return s.length % 2 ? s[i] : (s[i - 1] + s[i]) / 2;
+};
+
+function llegadas(days) {
+  const filas = LLEGADAS.map(([rango, tarde]) => ({ rango, tarde, valores: DIAS_SEMANA.map(() => 0), total: 0 }));
+  const porSucursal = new Map();
+  for (const d of days) {
+    if (!['PUNTUAL', 'RETARDO'].includes(d.estado) || !d.entrada || d.justificacion?.hora_permiso) continue;
+    const col = DIAS_SEMANA.indexOf(weekday(d.fecha));
+    if (col < 0) continue;
+    const diff = toMin(d.entrada) - toMin(d.horario.slice(0, 5));
+    let i;
+    if (d.estado === 'RETARDO') {
+      const despues = diff - d.tolerancia_min;
+      i = despues <= 10 ? 3 : despues <= 30 ? 4 : 5;
+    } else i = diff < -15 ? 0 : diff < 0 ? 1 : 2;
+    filas[i].valores[col]++;
+    filas[i].total++;
+    if (!porSucursal.has(d.sucursal)) porSucursal.set(d.sucursal, { sucursal: d.sucursal, semana: [], sabado: [], dif: [] });
+    const s = porSucursal.get(d.sucursal);
+    (weekday(d.fecha) === 6 ? s.sabado : s.semana).push(toMin(d.entrada));
+    s.dif.push(diff);
+  }
+  const sucursales = [...porSucursal.values()]
+    .map((s) => ({
+      sucursal: s.sucursal,
+      entradas: s.dif.length,
+      mediana_semana: s.semana.length ? hhmm(mediana(s.semana)) : null,
+      mediana_sabado: s.sabado.length ? hhmm(mediana(s.sabado)) : null,
+      // Minutos contra su hora de entrada (negativo = antes).
+      mediana_minutos: Math.round(mediana(s.dif)),
+    }))
+    .sort((a, b) => a.sucursal.localeCompare(b.sucursal));
+  return {
+    dias: DIAS_SEMANA.map((w) => DIAS[w]),
+    filas,
+    max: Math.max(0, ...filas.flatMap((f) => f.valores)),
+    total: filas.reduce((n, f) => n + f.total, 0),
+    sucursales,
+  };
 }
 
 // Letra y color de cada resultado en el calendario.
@@ -155,4 +217,4 @@ const CAL = {
   PENDIENTE: { letra: '', nombre: 'Aún no ocurre' },
 };
 
-module.exports = { analyze, CAL };
+module.exports = { analyze, llegadas, CAL };

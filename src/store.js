@@ -160,6 +160,20 @@ function open(file) {
       correo TEXT
     );
 
+    -- Lo que RH hizo con una persona (plática, acta, compromiso…), para dar
+    -- seguimiento y ver si después mejoró.
+    CREATE TABLE IF NOT EXISTS acciones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      branch_id INTEGER NOT NULL REFERENCES branches(id),
+      emp_code TEXT NOT NULL,
+      fecha TEXT NOT NULL,
+      tipo TEXT NOT NULL,
+      nota TEXT NOT NULL DEFAULT '',
+      autor TEXT NOT NULL,
+      creado TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS acciones_emp ON acciones(branch_id, emp_code);
+
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id),
@@ -181,6 +195,11 @@ function open(file) {
   // Misma persona en otra sucursal: apunta a su registro principal ("sucursal|número").
   if (!db.prepare('PRAGMA table_info(employees)').all().some((c) => c.name === 'principal')) {
     db.exec('ALTER TABLE employees ADD COLUMN principal TEXT');
+  }
+
+  // Sucursal de un usuario (gerentes): el sistema abre filtrado a ella.
+  if (!db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'branch_id')) {
+    db.exec('ALTER TABLE users ADD COLUMN branch_id INTEGER');
   }
 
   // El rol "Solo consulta" se dividió en Gerente y Dueño; quien lo tenía queda como Gerente.
@@ -446,6 +465,31 @@ class Store {
     this.db.prepare('DELETE FROM justifications WHERE id = ?').run(id);
   }
 
+  // ---------- seguimiento de RH ----------
+  // keys: ["sucursal|número", ...] para traer las de ciertas personas; sin keys, todas.
+  acciones(keys) {
+    const rows = this.db.prepare('SELECT * FROM acciones ORDER BY fecha DESC, id DESC').all();
+    if (!keys) return rows;
+    const set = new Set(keys);
+    return rows.filter((a) => set.has(`${a.branch_id}|${a.emp_code}`));
+  }
+
+  accion(id) {
+    return this.db.prepare('SELECT * FROM acciones WHERE id = ?').get(id);
+  }
+
+  saveAccion(a) {
+    return Number(
+      this.db
+        .prepare('INSERT INTO acciones (branch_id, emp_code, fecha, tipo, nota, autor, creado) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(a.branch_id, a.emp_code, a.fecha, a.tipo, a.nota || '', a.autor, now()).lastInsertRowid
+    );
+  }
+
+  deleteAccion(id) {
+    this.db.prepare('DELETE FROM acciones WHERE id = ?').run(id);
+  }
+
   // ---------- cierres de quincena ----------
   cierres() {
     return this.db
@@ -486,7 +530,7 @@ class Store {
   // ---------- usuarios y sesiones ----------
   users() {
     return this.db
-      .prepare('SELECT id, login, nombre, rol, activo, cambiar_clave, creado, ultimo_acceso FROM users ORDER BY nombre')
+      .prepare('SELECT id, login, nombre, rol, activo, cambiar_clave, creado, ultimo_acceso, branch_id FROM users ORDER BY nombre')
       .all()
       .map(parseUser);
   }
@@ -509,16 +553,16 @@ class Store {
     return r ? parseUser(r) : null;
   }
 
-  createUser({ login, nombre, rol, password, cambiar_clave = true }) {
+  createUser({ login, nombre, rol, password, cambiar_clave = true, branch_id = null }) {
     return Number(
       this.db
-        .prepare('INSERT INTO users (login, nombre, rol, password, cambiar_clave, creado) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(login, nombre, rol, password, cambiar_clave ? 1 : 0, now()).lastInsertRowid
+        .prepare('INSERT INTO users (login, nombre, rol, password, cambiar_clave, creado, branch_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(login, nombre, rol, password, cambiar_clave ? 1 : 0, now(), branch_id).lastInsertRowid
     );
   }
 
-  updateUser(id, { nombre, rol, activo }) {
-    this.db.prepare('UPDATE users SET nombre = ?, rol = ?, activo = ? WHERE id = ?').run(nombre, rol, activo ? 1 : 0, id);
+  updateUser(id, { nombre, rol, activo, branch_id = null }) {
+    this.db.prepare('UPDATE users SET nombre = ?, rol = ?, activo = ?, branch_id = ? WHERE id = ?').run(nombre, rol, activo ? 1 : 0, branch_id, id);
   }
 
   setPassword(id, password, cambiar_clave) {

@@ -38,7 +38,7 @@ const temporal = Array.from(crypto.randomBytes(8), (b) => ABC[b % ABC.length]).j
 db.setPassword(u.id, auth.hashPassword(temporal), true);
 db.deleteSessionsOf(u.id);
 // Si estaba desactivado, se reactiva para que pueda entrar.
-if (!u.activo) db.updateUser(u.id, { nombre: u.nombre, rol: u.rol, activo: true });
+if (!u.activo) db.updateUser(u.id, { nombre: u.nombre, rol: u.rol, activo: true, branch_id: u.branch_id });
 db.log('Recuperación desde el equipo', 'Contraseña restablecida', { login: u.login, nombre: u.nombre });
 
 console.log(`\nUsuario:             ${u.login}  (${u.nombre})`);

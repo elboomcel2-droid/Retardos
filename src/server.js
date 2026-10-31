@@ -11,6 +11,8 @@ const mailer = require('./mailer');
 const { htmlToPdf } = require('./pdf');
 const { createLive, weekPlan } = require('./live');
 const auth = require('./auth');
+const insights = require('./insights');
+const { analyze } = require('./analytics');
 
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
@@ -154,6 +156,50 @@ function computeReport(q) {
   return { from, to, today: today(), sucursal, branches, settings, employees, punches, justifications, result, cierres: cierresInfo };
 }
 
+// Lectura para RH: comparación con el periodo anterior, tendencia de las
+// últimas quincenas, casos de atención, cuadro de honor, confianza en los
+// datos y resumen en palabras. Cada periodo se calcula igual que su reporte
+// (con la copia de las quincenas cerradas), con los mismos filtros.
+function computeInsights(q, r) {
+  const { from, to, today: hoy, settings } = r;
+  const A = analyze(r.result, { from, to, today: hoy, settings });
+
+  let comparativo = null;
+  if (from <= hoy) {
+    const prev = insights.rangoComparable(from, to, hoy);
+    const P = computeReport({ ...q, from: prev.from, to: prev.to });
+    const KP = analyze(P.result, { from: prev.from, to: prev.to, today: hoy, settings: P.settings }).kpis;
+    const metricas = insights.comparar(A.kpis, KP);
+    if (metricas) comparativo = { desde: prev.from, hasta: prev.to, tipo: prev.tipo, parcial: prev.parcial, texto: insights.refTexto(prev), metricas };
+  }
+
+  // Últimas quincenas hasta la del último día evaluado (si el periodo es una
+  // de ellas, se reutiliza lo que ya se calculó).
+  const ancla = to < hoy ? to : hoy;
+  const hist = insights.quincenasHasta(ancla).map((p) => ({
+    ...p,
+    result: p.from === from && p.to === to ? r.result : computeReport({ ...q, from: p.from, to: p.to }).result,
+  }));
+  const orden = db.branches().map((b) => b.id);
+  const tendencia = insights.tendencia(hist, (id) => orden.indexOf(id));
+
+  const keys = r.result.employees.map((e) => `${e.branch_id}|${e.emp_code}`);
+  const casos = insights.casos({ hist, actual: r.result, settings, acciones: db.acciones(keys) });
+  const honor = insights.honor({ hist, actual: r.result });
+  const calidad = insights.calidad({
+    branches: r.branches,
+    coverage: new Map(db.coverage().map((c) => [c.branch_id, c])),
+    result: r.result,
+    duplicados: duplicados(),
+    holidays: db.holidays(),
+    from,
+    to,
+    today: hoy,
+  });
+  const resumen = insights.resumen({ kpis: A.kpis, comparativo, sucursales: A.sucursales, casos, honor, calidad });
+  return { resumen, comparativo, tendencia, casos, honor, calidad, llegadas: A.llegadas };
+}
+
 // Bloquea cambios en días de una quincena ya cerrada.
 function assertAbierto(from, to) {
   const c = db.cierresEn(from, to, false)[0];
@@ -171,6 +217,7 @@ const publicUser = (u) => ({
   rol_nombre: auth.ROLES[u.rol]?.nombre || u.rol,
   puede: auth.ROLES[u.rol]?.puede || [],
   cambiar_clave: u.cambiar_clave,
+  branch_id: u.branch_id ?? null,
 });
 
 function cleanNombre(nombre) {
@@ -299,6 +346,15 @@ app.post('/api/cuenta/clave', route((req, res) => {
 }));
 
 // ---------- usuarios (solo administrador) ----------
+// Sucursal con la que abre el sistema (vacío = todas). Solo es el filtro
+// inicial: no limita lo que la persona puede consultar.
+function cleanBranch(v) {
+  if (v === '' || v == null || v === 'all') return null;
+  const b = db.branch(v);
+  if (!b) throw bad('Sucursal no encontrada.');
+  return b.id;
+}
+
 app.get('/api/usuarios', route(() => db.users().map((u) => ({ ...u, rol_nombre: auth.ROLES[u.rol]?.nombre || u.rol }))));
 
 app.post('/api/usuarios', route((req) => {
@@ -306,8 +362,9 @@ app.post('/api/usuarios', route((req) => {
   const login = cleanLogin(req.body.login);
   if (!auth.ROLES[req.body.rol]) throw bad('Elija el tipo de acceso.');
   if (db.userByLogin(login)) throw bad(`Ya existe el usuario «${login}».`);
-  db.createUser({ login, nombre, rol: req.body.rol, password: cleanPassword(req.body.password, { login, nombre }) });
-  db.log(user(req), 'Usuario creado', { login, nombre, rol: req.body.rol });
+  const branch_id = cleanBranch(req.body.branch_id);
+  db.createUser({ login, nombre, rol: req.body.rol, password: cleanPassword(req.body.password, { login, nombre }), branch_id });
+  db.log(user(req), 'Usuario creado', { login, nombre, rol: req.body.rol, branch_id });
   return { ok: true };
 }));
 
@@ -324,10 +381,12 @@ app.put('/api/usuarios/:id', route((req) => {
   if (u.id === req.user.id && rol !== u.rol) throw bad('No puede cambiar su propio tipo de acceso. Pídalo a otro administrador.');
   const dejaDeSerAdmin = u.rol === 'admin' && u.activo && (rol !== 'admin' || !activo);
   if (dejaDeSerAdmin && db.activeAdmins() <= 1) throw bad('Debe quedar al menos un administrador activo.');
-  db.updateUser(u.id, { nombre, rol, activo });
+  const branch_id = req.body.branch_id === undefined ? u.branch_id ?? null : cleanBranch(req.body.branch_id);
+  db.updateUser(u.id, { nombre, rol, activo, branch_id });
   if (!activo) db.deleteSessionsOf(u.id);
   const cambios = {};
   if (nombre !== u.nombre) cambios.nombre = nombre;
+  if (branch_id !== (u.branch_id ?? null)) cambios.branch_id = branch_id;
   if (rol !== u.rol) cambios.rol = rol;
   if (!!activo !== u.activo) cambios.activo = !!activo;
   db.log(user(req), 'Usuario actualizado', { login: u.login, ...cambios });
@@ -517,13 +576,15 @@ app.get('/api/report', route((req) => {
   return { from: r.from, to: r.to, settings: r.settings, cierres: r.cierres, ...r.result };
 }));
 
+app.get('/api/analisis', route((req) => computeInsights(req.query, computeReport(req.query))));
+
 // Constancia de cada reporte que sale del sistema (descargado o impreso).
 const reportLog = (req, accion, r, extra = {}) =>
   db.log(user(req), accion, { desde: r.from, hasta: r.to, sucursal: r.sucursal, ...extra });
 
 app.get('/api/export.xlsx', route(async (req, res) => {
   const r = computeReport(req.query);
-  const buf = await buildWorkbook({ ...r, generadoPor: user(req) });
+  const buf = await buildWorkbook({ ...r, insights: computeInsights(req.query, r), generadoPor: user(req) });
   const name = `Asistencia_${r.branches.length === 1 ? r.branches[0].name : 'Todas'}_${r.from}_a_${r.to}.xlsx`;
   reportLog(req, 'Descarga de Excel', r, { archivo: name });
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -535,12 +596,13 @@ app.get('/api/export.xlsx', route(async (req, res) => {
 app.get('/reporte', route((req, res) => {
   const r = computeReport(req.query);
   reportLog(req, 'Vista del reporte imprimible', r);
-  res.type('html').send(buildReportHtml({ ...r, generadoPor: user(req) }));
+  res.type('html').send(buildReportHtml({ ...r, insights: computeInsights(req.query, r), generadoPor: user(req) }));
 }));
 
 // Reporte por persona: la ficha de cada empleado con todos sus días (para RH).
+const accionesDe = (r) => db.acciones(r.result.employees.map((e) => `${e.branch_id}|${e.emp_code}`));
 const personasHtml = (req, r, autoPrint = false) =>
-  buildPersonasHtml({ ...r, generadoPor: user(req), autoPrint });
+  buildPersonasHtml({ ...r, acciones: accionesDe(r), generadoPor: user(req), autoPrint });
 
 app.get('/reporte/personas', route((req, res) => {
   const r = computeReport(req.query);
@@ -564,11 +626,12 @@ app.get('/api/reporte-personas.pdf', route(async (req, res) => {
 async function enviarReporte(q, autor, asunto) {
   const settings = db.getSettings();
   const r = computeReport(q);
+  const info = computeInsights(q, r);
   const incluir = q.incluir?.length ? q.incluir : ['general', 'personas'];
   const base = `${r.branches.length === 1 ? r.branches[0].name : 'Todas'}_${r.from}_a_${r.to}`;
   const attachments = [];
-  if (incluir.includes('general')) attachments.push({ filename: `Asistencia_${base}.pdf`, content: await htmlToPdf(buildReportHtml({ ...r, generadoPor: autor })) });
-  if (incluir.includes('personas')) attachments.push({ filename: `Asistencia_por_persona_${base}.pdf`, content: await htmlToPdf(buildPersonasHtml({ ...r, generadoPor: autor })) });
+  if (incluir.includes('general')) attachments.push({ filename: `Asistencia_${base}.pdf`, content: await htmlToPdf(buildReportHtml({ ...r, insights: info, generadoPor: autor })) });
+  if (incluir.includes('personas')) attachments.push({ filename: `Asistencia_por_persona_${base}.pdf`, content: await htmlToPdf(buildPersonasHtml({ ...r, acciones: accionesDe(r), generadoPor: autor })) });
   const periodo = `${fmtFecha(r.from)} al ${fmtFecha(r.to)}`;
   const destinatarios = await mailer.send(settings, {
     to: settings.correo_rh,
@@ -576,6 +639,9 @@ async function enviarReporte(q, autor, asunto) {
     text: [
       `Reporte de asistencia del ${periodo} (${r.sucursal}).`,
       `Personas: ${r.result.employees.length}.`,
+      '',
+      'En pocas palabras:',
+      ...info.resumen.map((x) => `- ${x}`),
       '',
       'Se adjuntan los archivos PDF. Este correo lo envió el sistema de Control de Retardos de El Boom Tractopartes.',
       `Enviado por: ${autor}.`,
@@ -603,7 +669,7 @@ app.post('/api/correo/prueba', route(async (req) => {
 
 app.get('/api/reporte.pdf', route(async (req, res) => {
   const r = computeReport(req.query);
-  const pdf = await htmlToPdf(buildReportHtml({ ...r, generadoPor: user(req) }));
+  const pdf = await htmlToPdf(buildReportHtml({ ...r, insights: computeInsights(req.query, r), generadoPor: user(req) }));
   const name = `Asistencia_${r.branches.length === 1 ? r.branches[0].name : 'Todas'}_${r.from}_a_${r.to}.pdf`;
   reportLog(req, 'Descarga de PDF', r, { archivo: name });
   res.setHeader('Content-Type', 'application/pdf');
@@ -708,7 +774,9 @@ app.post('/api/employees/:branch/:code/principal', route((req) => {
 }));
 
 // Posible misma persona en dos sucursales: mismo nombre completo y sin vincular.
-app.get('/api/employees/duplicados', route(() => {
+app.get('/api/employees/duplicados', route(() => duplicados()));
+
+function duplicados() {
   const branches = new Map(db.branches().map((b) => [b.id, b]));
   const groups = new Map();
   for (const e of db.employees()) {
@@ -722,7 +790,7 @@ app.get('/api/employees/duplicados', route(() => {
   return [...groups.values()]
     .filter((g) => new Set(g.map((e) => e.branch_id)).size > 1)
     .map((g) => g.map((e) => ({ branch_id: e.branch_id, emp_code: e.emp_code, nombre: e.alias || `${e.first_name} ${e.last_name}`.trim(), sucursal: `${branches.get(e.branch_id).code} ${branches.get(e.branch_id).name}` })));
-}));
+}
 
 app.get('/api/employees/pendientes', route(() => {
   const since = engine.addDays(today(), -db.getSettings().dias_contexto);
@@ -839,6 +907,63 @@ app.delete('/api/justifications/:id', route((req) => {
   assertAbierto(j.fecha, j.fecha);
   db.deleteJustification(j.id);
   db.log(user(req), 'Justificación eliminada', j);
+  return { ok: true };
+}));
+
+// ---------- seguimiento de RH ----------
+// Pláticas, actas y compromisos con cada persona, y si después mejoró:
+// retardos y faltas en los 30 días antes y en los 30 días después.
+const TIPOS_ACCION = ['Plática verbal', 'Llamada de atención por escrito', 'Acta administrativa', 'Compromiso de mejora', 'Reconocimiento', 'Otro'];
+const DIAS_EFECTO = 30;
+
+function efectoAcciones(lista) {
+  if (!lista.length) return lista;
+  const { branch_id, emp_code } = lista[0];
+  const hoy = today();
+  const fechas = lista.map((a) => a.fecha).sort();
+  let from = engine.addDays(fechas[0], -DIAS_EFECTO);
+  const to = [engine.addDays(fechas[fechas.length - 1], DIAS_EFECTO), hoy].sort()[0];
+  if (engine.eachDay(from, to).length > 400) from = engine.addDays(to, -399);
+  const days = computeReport({ from, to, branch: branch_id, emp: `${branch_id}|${emp_code}` }).result.days;
+  const cuenta = (a, z) => {
+    const ds = days.filter((d) => d.fecha >= a && d.fecha <= z);
+    const ret = ds.filter((d) => d.estado === 'RETARDO');
+    return { desde: a, hasta: z, retardos: ret.length, minutos_retardo: ret.reduce((n, d) => n + d.retardo_min, 0), faltas: ds.filter((d) => d.estado === 'FALTA').length, dias: ds.filter((d) => ['PUNTUAL', 'RETARDO', 'FALTA', 'INCOMPLETO'].includes(d.estado)).length };
+  };
+  return lista.map((a) => {
+    const antes = a.fecha > from ? cuenta(engine.addDays(a.fecha, -DIAS_EFECTO), engine.addDays(a.fecha, -1)) : null;
+    const fin = [engine.addDays(a.fecha, DIAS_EFECTO), engine.addDays(hoy, -1)].sort()[0];
+    const despues = fin > a.fecha ? cuenta(engine.addDays(a.fecha, 1), fin) : null;
+    return { ...a, antes, despues };
+  });
+}
+
+app.get('/api/acciones', route((req) => {
+  const emp = String(req.query.emp || '');
+  if (!/^\d+\|.+$/.test(emp)) throw bad('Falta la persona.');
+  return { tipos: TIPOS_ACCION, items: efectoAcciones(db.acciones([emp])) };
+}));
+
+app.post('/api/acciones', route((req) => {
+  const a = req.body;
+  const b = db.branch(a.branch_id);
+  if (!b || !a.emp_code) throw bad('Falta la persona.');
+  if (!ISO.test(a.fecha || '')) throw bad('La fecha no existe. Revise el día y el mes.');
+  if (a.fecha > today()) throw bad('La fecha no puede ser posterior a hoy.');
+  if (!TIPOS_ACCION.includes(a.tipo)) throw bad('Elija qué se hizo.');
+  const nota = String(a.nota || '').trim();
+  if (nota.length < 5) throw bad('Escriba de qué se habló o qué se acordó.');
+  if (nota.length > 500) throw bad('La nota puede tener como máximo 500 letras.');
+  const id = db.saveAccion({ branch_id: b.id, emp_code: String(a.emp_code), fecha: a.fecha, tipo: a.tipo, nota, autor: user(req) });
+  db.log(user(req), 'Seguimiento registrado', { branch_id: b.id, emp_code: String(a.emp_code), fecha: a.fecha, tipo: a.tipo, nota });
+  return { id };
+}));
+
+app.delete('/api/acciones/:id', route((req) => {
+  const a = db.accion(req.params.id);
+  if (!a) throw bad('No existe.');
+  db.deleteAccion(a.id);
+  db.log(user(req), 'Seguimiento eliminado', a);
   return { ok: true };
 }));
 

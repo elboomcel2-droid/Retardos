@@ -15,6 +15,7 @@ const PERMISOS = {
   ver: 'Ver panel, empleados y detalle; descargar Excel/PDF e imprimir',
   actualizar: 'Actualizar las checadas desde los checadores',
   justificar: 'Justificar o anotar retardos y faltas',
+  seguimiento: 'Registrar pláticas, actas y compromisos con el personal (seguimiento)',
   empleados: 'Nombres completos, bajas, horarios especiales y vincular sucursales',
   reglas: 'Reglas de puntualidad, horarios de sucursal, festivos y ajustes del cálculo',
   importar: 'Cargar checadas desde archivo',
@@ -31,7 +32,7 @@ const ROLES = {
   rh: {
     nombre: 'Recursos Humanos',
     desc: 'Casi toda la configuración, justificaciones, cierre de quincena y correo',
-    puede: ['ver', 'actualizar', 'justificar', 'empleados', 'reglas', 'importar', 'correo', 'cerrar', 'historial'],
+    puede: ['ver', 'actualizar', 'justificar', 'seguimiento', 'empleados', 'reglas', 'importar', 'correo', 'cerrar', 'historial'],
   },
   gerente: {
     nombre: 'Gerente',
@@ -139,6 +140,7 @@ function permisoDe(method, url) {
   if (url === '/api/registro/impresion') return 'ver';
   if (url === '/api/sync') return 'actualizar';
   if (url.startsWith('/api/justifications')) return 'justificar';
+  if (url.startsWith('/api/acciones')) return 'seguimiento';
   if (url.startsWith('/api/employees')) return 'empleados';
   if (/^\/api\/branches\/[^/]+\/test/.test(url)) return 'conexion';
   if (url.startsWith('/api/branches') || url.startsWith('/api/settings') || url.startsWith('/api/holidays')) return 'reglas';

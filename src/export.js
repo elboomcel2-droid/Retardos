@@ -235,6 +235,103 @@ function buildDashboard(wb, A, ctx) {
   return charts;
 }
 
+// ---------------------------------------------------------------- Lo más importante
+// Resumen en palabras, comparación, confianza en los datos, casos de atención,
+// cuadro de honor, tendencia y horas de llegada: lo que RH revisa primero.
+function buildInsights(wb, I) {
+  const ws = wb.addWorksheet('Lo más importante', { views: [{ showGridLines: false }], properties: { tabColor: { argb: 'FFE8A317' } } });
+  [34, 18, 22, 18, 46, 24, 14].forEach((w, i) => (ws.getColumn(i + 1).width = w));
+  let r = 1;
+  const title = (t) => {
+    r += r > 1 ? 1 : 0;
+    ws.getCell(r, 1).value = t;
+    ws.getCell(r, 1).font = { size: 14, bold: true, color: { argb: NAVY } };
+    r += 1;
+  };
+  const note = (t) => {
+    ws.getCell(r, 1).value = t;
+    ws.getCell(r, 1).font = { size: 9, italic: true, color: { argb: MUTED } };
+    r += 1;
+  };
+  const grid = (headers, rows) => {
+    headers.forEach((h, j) => {
+      const c = ws.getCell(r, j + 1);
+      c.value = h;
+      c.font = { bold: true, size: 9, color: { argb: 'FFFFFFFF' } };
+      c.fill = solid(NAVY);
+      c.alignment = { wrapText: true, vertical: 'middle' };
+    });
+    r += 1;
+    for (const row of rows) {
+      row.forEach((v, j) => {
+        const c = ws.getCell(r, j + 1);
+        c.value = v;
+        c.border = box;
+        c.font = { size: 9 };
+        c.alignment = { wrapText: true, vertical: 'top' };
+      });
+      r += 1;
+    }
+    if (!rows.length) note('Sin registros.');
+  };
+
+  title('En pocas palabras');
+  for (const x of I.resumen) {
+    ws.mergeCells(r, 1, r, 7);
+    ws.getCell(r, 1).value = `• ${x}`;
+    ws.getCell(r, 1).alignment = { wrapText: true };
+    r += 1;
+  }
+
+  title('¿Qué tan confiables son estos datos?');
+  const NIVEL = { verde: ['Al día', 'FFDFF3E4'], amarillo: ['Revisar', 'FFFFF1C2'], rojo: ['No confiable', 'FFFAD4D4'] };
+  const q0 = r + 1;
+  grid(['Sucursal', 'Estado', 'Última checada', 'Días de trabajo sin checadas', 'Qué revisar'],
+    I.calidad.map((q) => [q.sucursal, NIVEL[q.nivel][0], q.ultima_checada ? fmtDate(q.ultima_checada) : '—', q.dias_sin_checadas ?? '—', q.motivos.join('; ') || 'Nada']));
+  I.calidad.forEach((q, i) => (ws.getCell(q0 + i, 2).fill = solid(NIVEL[q.nivel][1])));
+
+  const M = I.comparativo?.metricas;
+  title(`Comparado con ${I.comparativo?.texto || 'el periodo anterior'}`);
+  if (M) {
+    note(`Periodo anterior: ${fmtDate(I.comparativo.desde)} al ${fmtDate(I.comparativo.hasta)}.`);
+    grid(['Indicador', 'Este periodo', 'Antes', 'Cambio', '¿Mejoró?'],
+      [['Puntualidad (%)', 'puntualidad'], ['Asistencia (%)', 'asistencia'], ['Retardos', 'retardos'], ['Minutos de retardo', 'minutos_retardo'], ['Personas con retardo', 'personas_con_retardo'],
+       ['Faltas', 'faltas'], ['Faltas por retardos', 'faltas_por_retardos'], ['Checadas incompletas', 'incompletas'], ['Se pasaron en la comida', 'excesos_comida']]
+        .map(([l, k]) => [l, M[k]?.actual ?? '—', M[k]?.anterior ?? '—', M[k]?.delta ?? '—', !M[k] || M[k].mejor == null ? 'Igual' : M[k].mejor ? 'Mejor' : 'Peor']));
+  } else note('No hay datos del periodo anterior para comparar.');
+
+  title('Personas que requieren atención');
+  grid(['Empleado', 'No.', 'Sucursal', 'Retardos', 'Por qué', 'Última acción de RH'],
+    I.casos.map((c) => [c.nombre, c.emp_code, c.sucursal, c.retardos, c.motivos.map((m) => m.texto).join('\n'), c.ultima_accion ? `${c.ultima_accion.tipo} (${fmtDate(c.ultima_accion.fecha)})` : 'Ninguna']));
+
+  title('Cuadro de honor: puntualidad perfecta');
+  grid(['Empleado', 'No.', 'Sucursal', 'Días a tiempo'], I.honor.perfectos.map((p) => [p.nombre, p.emp_code, p.sucursal, p.puntuales]));
+  title('Rachas: días de trabajo seguidos a tiempo');
+  grid(['Empleado', 'No.', 'Sucursal', 'Días seguidos', 'Desde'], I.honor.rachas.map((p) => [p.nombre, p.emp_code, p.sucursal, p.dias, fmtDate(p.desde)]));
+
+  title('Tendencia por quincena');
+  grid(['Quincena', 'Sucursal', '% Puntualidad', 'Retardos', 'Minutos de retardo', 'Faltas'],
+    I.tendencia.flatMap((q) => [
+      ...q.sucursales.map((s) => [q.etiqueta, s.sucursal, s.puntualidad ?? '—', s.retardos, s.minutos_retardo, s.faltas]),
+      [q.etiqueta, 'Total', q.total.puntualidad ?? '—', q.total.retardos, q.total.minutos_retardo, q.total.faltas],
+    ]));
+
+  title('¿A qué hora llegan?');
+  note('Entradas comparadas con la hora de entrada que le tocaba ese día. Los justificados no cuentan.');
+  const L = I.llegadas;
+  const h0 = r + 1;
+  grid(['Llegada', ...L.dias, 'Total'], L.filas.map((f) => [f.rango, ...f.valores, f.total]));
+  if (L.filas.length) {
+    ws.addConditionalFormatting({
+      ref: `B${h0}:${ws.getColumn(1 + L.dias.length).letter}${h0 + L.filas.length - 1}`,
+      rules: [{ type: 'colorScale', cfvo: [{ type: 'num', value: 0 }, { type: 'max' }], color: [{ argb: 'FFF8FAFC' }, { argb: 'FF1C5CAB' }] }],
+    });
+  }
+  grid(['Sucursal', 'Entradas', 'La mitad llega antes de (lun–vie)', 'La mitad llega antes de (sábado)', 'Minutos contra su hora de entrada (mediana)'],
+    L.sucursales.map((s) => [s.sucursal, s.entradas, s.mediana_semana || '—', s.mediana_sabado || '—', s.mediana_minutos]));
+  ws.pageSetup = { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 };
+}
+
 // ---------------------------------------------------------------- Calendario
 function buildCalendar(wb, A) {
   const ws = wb.addWorksheet('Calendario', { views: [{ state: 'frozen', xSplit: 3, ySplit: 3 }] });
@@ -301,13 +398,14 @@ function buildCalendar(wb, A) {
 }
 
 // ---------------------------------------------------------------- Libro completo
-async function buildWorkbook({ from, to, result, punches, branches, employees, settings, justifications, generadoPor, today, sucursal }) {
+async function buildWorkbook({ from, to, result, punches, branches, employees, settings, justifications, generadoPor, today, sucursal, insights }) {
   const A = analyze(result, { from, to, today, settings });
   const wb = new ExcelJS.Workbook();
   wb.creator = 'Control de Retardos - El Boom Tractopartes';
   wb.created = new Date();
 
   const charts = buildDashboard(wb, A, { from, to, generadoPor, sucursal, result });
+  if (insights) buildInsights(wb, insights);
 
   const porPersona = sheet(wb, 'Retardos por persona', [
     ['Sucursal', 'sucursal', 18], ['No.', 'emp_code', 8], ['Empleado', 'nombre', 32],
